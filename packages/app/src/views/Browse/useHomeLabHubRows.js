@@ -207,7 +207,7 @@ const fetchLocalRows = async (api, hub, nextUpMaxDays) => {
 };
 
 const appendLocalLibraryRows = (rows, hub, targetData) => {
-	targetData.forEach(({library, items, latest}) => {
+	targetData.forEach(({library, latest}) => {
 		const name = String(library.Name || 'Library');
 		if (latest.length) {
 			rows.push({
