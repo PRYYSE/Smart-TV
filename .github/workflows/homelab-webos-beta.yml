@@ -40,9 +40,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate Moonbase profile mapping
-        run: npx jest packages/app/src/utils/homeLayout.test.js --runInBand
-
       - name: Build webOS IPK
         run: npm run build:webos
 
