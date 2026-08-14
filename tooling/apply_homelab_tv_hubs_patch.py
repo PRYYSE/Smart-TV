@@ -24,7 +24,7 @@ def patch_browse():
     replace_once(
         rel,
         "\tconst contentRowsRef = useRef(null);\n\n\tconst showFeaturedBar = (settings.featuredBarStyle !== 'off');",
-        "\tconst contentRowsRef = useRef(null);\n\tconst [homeLabHub, setHomeLabHub] = useState('home');\n\tconst {rows: homeLabHubRows, isLoading: homeLabHubLoading} = useHomeLabHubRows({\n\t\thub: homeLabHub,\n\t\tapi,\n\t\tseerrEnabled,\n\t\tseerrAuthenticated,\n\t\tnextUpMaxDays: settings.nextUpMaxDays\n\t});\n\n\tconst showFeaturedBar = homeLabHub === 'home' && (settings.featuredBarStyle !== 'off');"
+        "\tconst contentRowsRef = useRef(null);\n\tconst [homeLabHub, setHomeLabHub] = useState('home');\n\tconst {rows: homeLabHubRows, isLoading: homeLabHubLoading} = useHomeLabHubRows({\n\t\thub: homeLabHub,\n\t\tapi,\n\t\tseerrEnabled,\n\t\tseerrAuthenticated,\n\t\tnextUpMaxDays: settings.nextUpMaxDays,\n\t\tcustomHomeRows: settings.customHomeRows\n\t});\n\n\tconst showFeaturedBar = homeLabHub === 'home' && (settings.featuredBarStyle !== 'off');"
     )
     replace_once(
         rel,

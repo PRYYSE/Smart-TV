@@ -1,8 +1,9 @@
 import {useEffect, useState} from 'react';
 import $L from '@enact/i18n/$L';
 
-import {HOME_ROW_ITEM_FIELDS} from '../../services/jellyfinApi';
+import {HOME_ROW_ITEM_FIELDS, resolveItemsByProviderIds} from '../../services/jellyfinApi';
 import seerrApi from '../../services/seerrApi';
+import {fetchCustomHomeRow} from '../../utils/externalHomeRows';
 import {fetchSeerrHomeRow, normalizeMediaItem} from '../../utils/seerrHomeRows';
 
 const HUBS = ['movies', 'tv', 'anime'];
@@ -64,6 +65,42 @@ const makeSeerrRow = (id, title, items, type = 'portrait', extra = {}) => ({
 	isSeerrRow: true,
 	...extra
 });
+
+const configuredRowsForHub = (customHomeRows, hub) => (customHomeRows || [])
+	.filter((row) => Array.isArray(row.homelabDestinations) && row.homelabDestinations.indexOf(hub) !== -1)
+	.sort((left, right) => (left.order || 0) - (right.order || 0));
+
+const fetchConfiguredDiscoveryRows = async (customHomeRows, hub) => {
+	const configs = configuredRowsForHub(customHomeRows, hub);
+	if (!configs.length) return [];
+
+	const loaded = await Promise.all(configs.map(async (row) => ({
+		row,
+		items: await fetchCustomHomeRow(row)
+	})));
+	const populated = loaded.filter((entry) => entry.items.length > 0);
+	if (!populated.length) return [];
+
+	const allItems = [];
+	const slices = [];
+	populated.forEach((entry) => {
+		slices.push({start: allItems.length, count: entry.items.length});
+		allItems.push(...entry.items);
+	});
+	const resolved = await resolveItemsByProviderIds(allItems);
+
+	return populated.map((entry, index) => {
+		const slice = slices[index];
+		return {
+			id: `homelab-configured-${entry.row.id}`,
+			title: entry.row.name || entry.row.title || $L('Discover'),
+			items: resolved.slice(slice.start, slice.start + slice.count),
+			type: 'portrait',
+			isExternalRow: true,
+			isCustomRow: true
+		};
+	}).filter((row) => row.items.length > 0);
+};
 
 const fetchAnimeDiscoveryRows = async () => {
 	try {
@@ -230,7 +267,7 @@ const appendLocalLibraryRows = (rows, hub, targetData) => {
 	});
 };
 
-const useHomeLabHubRows = ({hub, api, seerrEnabled, seerrAuthenticated, nextUpMaxDays}) => {
+const useHomeLabHubRows = ({hub, api, seerrEnabled, seerrAuthenticated, nextUpMaxDays, customHomeRows}) => {
 	const [rows, setRows] = useState([]);
 	const [isLoading, setIsLoading] = useState(false);
 
@@ -250,10 +287,13 @@ const useHomeLabHubRows = ({hub, api, seerrEnabled, seerrAuthenticated, nextUpMa
 				if (cancelled) return;
 
 				const builtRows = Array.isArray(local) ? [] : [...local.rows];
-				if (seerrEnabled && seerrAuthenticated) {
-					const discoveryRows = hub === 'anime'
+				let discoveryRows = await fetchConfiguredDiscoveryRows(customHomeRows, hub);
+				if (!discoveryRows.length && seerrEnabled && seerrAuthenticated) {
+					discoveryRows = hub === 'anime'
 						? await fetchAnimeDiscoveryRows()
 						: await fetchStandardDiscoveryRows(hub);
+				}
+				if (discoveryRows.length) {
 					if (cancelled) return;
 					builtRows.push(...discoveryRows);
 				}
@@ -273,7 +313,7 @@ const useHomeLabHubRows = ({hub, api, seerrEnabled, seerrAuthenticated, nextUpMa
 		return () => {
 			cancelled = true;
 		};
-	}, [hub, api, seerrEnabled, seerrAuthenticated, nextUpMaxDays]);
+	}, [hub, api, seerrEnabled, seerrAuthenticated, nextUpMaxDays, customHomeRows]);
 
 	return {rows, isLoading};
 };

@@ -7,6 +7,7 @@ import {
 	DEFAULT_HOME_ROWS,
 	SERVER_TO_TV_ROW,
 	TV_TO_SERVER_ROW,
+	customHomeRowsFromProfile,
 	hasSeenServerLayout,
 	homeRowsFromProfile,
 	homeRowsToRowOrder,
@@ -175,6 +176,10 @@ export const SYNCABLE_KEYS = [
 	'backdropBlurHome', 'backdropBlurDetail',
 	'mediaBarSourceType', 'mediaBarLibraryIds', 'mediaBarCollectionIds',
 	'homeRows', 'homeRowsStyle', 'detailScreenStyle', 'detailExpandedTabs', 'fullScreenRows', 'homeRowsPosterSize', 'useSeriesThumbnails',
+	// Derived from pluginDynamic homeSections. It is pulled so Home and the
+	// destination hubs can render Moonbase rows, but is never written back as a
+	// standalone profile field (homeSections remains authoritative).
+	'customHomeRows',
 	'useDetailedSubHeadings', 'showMediaDetailsOnLibraryPage', 'hideBackdropsInLibraries',
 	'syncplayEnabled', 'syncplayAutoOpen',
 	'showSyncPlayButton',
@@ -225,7 +230,7 @@ export const profileToLocal = (serverProfile) => {
 export const localToProfile = (localSettings) => {
 	const profile = {};
 	for (const key of SYNCABLE_KEYS) {
-		if (key === 'homeRows') continue;
+		if (key === 'homeRows' || key === 'customHomeRows') continue;
 		const value = localSettings[key];
 		if (value === undefined || value === null) continue;
 		const serverKey = LOCAL_TO_SERVER[key] || key;
@@ -271,6 +276,11 @@ const resolveFromEnvelope = (envelope, adminDefaults) => {
 		?? homeRowsFromProfile(envelope?.global)
 		?? homeRowsFromProfile(adminDefaults);
 	if (homeRows !== undefined) resolved.homeRows = homeRows;
+
+	const customHomeRows = customHomeRowsFromProfile(envelope?.tv)
+		?? customHomeRowsFromProfile(envelope?.global)
+		?? customHomeRowsFromProfile(adminDefaults);
+	if (customHomeRows !== undefined) resolved.customHomeRows = customHomeRows;
 	return resolved;
 };
 

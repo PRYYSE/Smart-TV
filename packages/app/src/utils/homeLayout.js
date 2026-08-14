@@ -198,6 +198,47 @@ export const homeRowsFromProfile = (serverProfile) => {
 	return undefined;
 };
 
+// Moonbase stores custom/editorial rows inside homeSections as pluginDynamic
+// entries. Convert them into the shape consumed by the TV external-row loader.
+// Disabled destination-only rows are deliberately kept: they stay off Home but
+// remain available to Movies, TV and Anime hubs.
+export const customHomeRowsFromProfile = (serverProfile) => {
+	const sections = serverProfile?.homeSections;
+	if (!Array.isArray(sections)) return undefined;
+
+	const rows = sections.map((section) => {
+		if (!section || String(section.kind || '').toLowerCase() !== 'plugindynamic') return null;
+		if (String(section.serverId || '').toLowerCase() !== 'custom') return null;
+
+		let data = section.pluginAdditionalData;
+		if (typeof data === 'string') {
+			try {
+				data = JSON.parse(data);
+			} catch (error) {
+				return null;
+			}
+		}
+		if (!data || typeof data !== 'object' || !data.source || !data.type) return null;
+
+		return {
+			id: section.pluginSection || `custom-${section.order || 0}`,
+			name: section.pluginDisplayText || section.pluginSection || 'Custom',
+			enabled: section.enabled !== false,
+			order: section.order ?? 0,
+			source: data.source,
+			type: data.type,
+			params: data.params || {},
+			sortBy: data.sort_by || data.sortBy || 'none',
+			sortOrder: data.sort_order || data.sortOrder || 'desc',
+			showUserRatings: data.show_user_ratings ?? data.showUserRatings,
+			homelabDestinations: Array.isArray(data.homelab_destinations) ? data.homelab_destinations : [],
+			homelabDestinationOnly: data.homelab_destination_only === true
+		};
+	}).filter(Boolean);
+
+	return rows.length > 0 ? rows.sort((left, right) => left.order - right.order) : undefined;
+};
+
 export const homeRowsToSections = (rows) => [
 	...[...rows]
 		.sort((left, right) => left.order - right.order)

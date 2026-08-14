@@ -2,6 +2,7 @@ import {
 	DEFAULT_HOME_ROWS,
 	TV_TO_SERVER_ROW,
 	__resetHomeLayoutPassthrough,
+	customHomeRowsFromProfile,
 	hasSeenServerLayout,
 	homeRowsFromProfile,
 	homeRowsFromRowOrder,
@@ -104,6 +105,50 @@ describe('homeRowsFromProfile', () => {
 	test('a profile with no layout yields nothing', () => {
 		expect(homeRowsFromProfile({})).toBeUndefined();
 		expect(homeRowsFromProfile(null)).toBeUndefined();
+	});
+});
+
+describe('customHomeRowsFromProfile', () => {
+	test('converts Moonbase pluginDynamic sections and keeps destination-only rows', () => {
+		const rows = customHomeRowsFromProfile({
+			homeSections: [
+				{kind: 'builtin', type: 'resume', enabled: true, order: 0},
+				{
+					kind: 'pluginDynamic',
+					type: 'none',
+					enabled: false,
+					order: 12,
+					serverId: 'custom',
+					pluginSection: 'homelab_anime_fresh',
+					pluginDisplayText: 'Fresh Discoveries',
+					pluginAdditionalData: JSON.stringify({
+						source: 'tmdb_chart',
+						type: 'discover/tv?with_genres=16',
+						params: {},
+						homelab_destinations: ['anime'],
+						homelab_destination_only: true
+					})
+				}
+			]
+		});
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			id: 'homelab_anime_fresh',
+			name: 'Fresh Discoveries',
+			enabled: false,
+			source: 'tmdb_chart',
+			type: 'discover/tv?with_genres=16',
+			homelabDestinations: ['anime'],
+			homelabDestinationOnly: true
+		});
+	});
+
+	test('ignores malformed and non-custom dynamic sections', () => {
+		expect(customHomeRowsFromProfile({homeSections: [
+			{kind: 'pluginDynamic', serverId: 'custom', pluginAdditionalData: '{bad'},
+			{kind: 'pluginDynamic', serverId: 'collections', pluginAdditionalData: '{}'}
+		]})).toBeUndefined();
 	});
 });
 
