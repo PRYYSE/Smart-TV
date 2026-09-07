@@ -179,7 +179,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
 
 const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, onSelectItem, onSelectGenre, onOpenRequests}) => {
 	const {settings} = useSettings();
-	const tabs = catalogue.tabs || [];
+	const tabs = useMemo(() => catalogue.tabs || [], [catalogue.tabs]);
 	const viewKey = `${serverUrl}|${userId || 'user'}|${catalogue.generatedAt || catalogue.schemaVersion}`;
 
 	if (retainedLanding.key !== viewKey) {
@@ -245,7 +245,7 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 
 	const activeTab = tabs[activeTabIndex] || tabs[0];
 	const activeResult = activeTab ? tabResults[activeTab.id] : null;
-	const visibleLanes = activeResult?.usableLanes || [];
+	const visibleLanes = useMemo(() => activeResult?.usableLanes || [], [activeResult]);
 	const activeLoading = activeTab ? !!loadingByTab[activeTab.id] : false;
 
 	useEffect(() => {
