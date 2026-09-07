@@ -1,4 +1,5 @@
 import {
+	HOME_LAB_DISCOVERY_CAPABILITY,
 	homeLabDiscoveryCatalogueCacheKey,
 	homeLabDiscoveryCatalogueUrl,
 	loadHomeLabDiscoveryCatalogue,
@@ -72,6 +73,23 @@ describe('Home Lab Discovery v2 catalogue loader', () => {
 		expect(result.source).toBe('cache');
 		expect(result.catalogue.catalogueRevision).toBe('known-good');
 		expect(result.networkError).toBeTruthy();
+	});
+
+	test('falls back when a future catalogue requires a newer Discovery capability', async () => {
+		const storage = makeStorage();
+		const key = homeLabDiscoveryCatalogueCacheKey('http://server');
+		storage.values[key] = JSON.stringify(makeCatalogue({catalogueRevision: 'compatible-lkg'}));
+		const result = await loadHomeLabDiscoveryCatalogue({
+			serverUrl: 'http://server',
+			fetchImpl: async () => response(makeCatalogue({
+				catalogueRevision: 'future',
+				minimumDiscoveryCapability: HOME_LAB_DISCOVERY_CAPABILITY + 1
+			})),
+			storage
+		});
+		expect(result.source).toBe('cache');
+		expect(result.catalogue.catalogueRevision).toBe('compatible-lkg');
+		expect(result.networkError.message).toContain('requires capability');
 	});
 
 	test('returns unavailable instead of accepting an invalid cache', async () => {
