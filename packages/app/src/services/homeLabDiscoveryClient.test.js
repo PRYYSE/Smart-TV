@@ -40,7 +40,7 @@ describe('Home Lab Discovery v2 proxy client', () => {
 
 	test('unwraps Moonbase FileContents envelopes', async () => {
 		const payload = JSON.stringify({page: 3, results: [{id: 7}]});
-		const encoded = Buffer.from(payload, 'utf8').toString('base64');
+		const encoded = window.btoa(payload);
 		const result = await executeHomeLabDiscoveryPlan({
 			serverUrl: 'http://server',
 			accessToken: 'token',
