@@ -1,0 +1,68 @@
+name: Home Lab webOS Discovery v2
+
+on:
+  push:
+    branches:
+      - homelab/webos-discovery-v2
+    paths:
+      - '.github/workflows/homelab-webos-discovery-v2.yml'
+      - 'packages/app/**'
+      - 'packages/build-webos/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homelab-webos-discovery-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Discovery service tests
+        run: npm test --workspace=@moonfin/app -- --runInBand packages/app/src/services/homeLabDiscoveryPlanner.test.js packages/app/src/services/homeLabDiscoveryCatalogue.test.js packages/app/src/services/homeLabDiscoveryClient.test.js
+
+      - name: Build webOS package
+        run: npm run build:webos
+
+      - name: Verify preserved app identity and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const appInfo = JSON.parse(fs.readFileSync('packages/build-webos/webos-meta/appinfo.json', 'utf8'));
+          if (appInfo.id !== 'org.moonfin.webos') throw new Error(`Unexpected webOS app id: ${appInfo.id}`);
+          if (appInfo.version !== '2.7.0') throw new Error(`Unexpected webOS baseline version: ${appInfo.version}`);
+          if (appInfo.main !== 'index.html') throw new Error(`Unexpected webOS entry point: ${appInfo.main}`);
+          NODE
+          IPK="$(find . -maxdepth 1 -type f -name 'Moonfin_webOS_*.ipk' -print -quit)"
+          if [ -z "$IPK" ] || [ ! -f "$IPK" ]; then
+            echo 'Moonfin webOS IPK was not produced.' >&2
+            exit 1
+          fi
+          cp "$IPK" Moonfin_HomeLab_webOS_DiscoveryV2.ipk
+          sha256sum Moonfin_HomeLab_webOS_DiscoveryV2.ipk > Moonfin_HomeLab_webOS_DiscoveryV2.ipk.sha256
+
+      - name: Upload isolated candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonfin-HomeLab-webOS-DiscoveryV2-${{ github.sha }}
+          path: |
+            Moonfin_HomeLab_webOS_DiscoveryV2.ipk
+            Moonfin_HomeLab_webOS_DiscoveryV2.ipk.sha256
+          if-no-files-found: error
