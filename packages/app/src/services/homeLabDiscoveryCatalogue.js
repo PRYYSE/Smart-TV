@@ -1,3 +1,5 @@
+export const HOME_LAB_DISCOVERY_CAPABILITY = 2;
+
 const SUPPORTED_SCHEMA_VERSIONS = new Set([1, 2]);
 const CATALOGUE_PATH = '/Moonfin/Web/homelab/discovery.catalogue.json';
 const CACHE_PREFIX = 'moonfin.homelab.discovery.catalogue.v2.';
@@ -69,8 +71,12 @@ export const validateHomeLabDiscoveryCatalogue = (catalogue) => {
 	}
 	if (!Array.isArray(catalogue.tabs) || catalogue.tabs.length === 0) throw new Error('Discovery catalogue must contain tabs');
 	if (catalogue.generatedAt != null && Number.isNaN(Date.parse(catalogue.generatedAt))) throw new Error('Discovery generatedAt must be ISO-8601');
-	if (catalogue.minimumDiscoveryCapability != null && !Number.isFinite(Number(catalogue.minimumDiscoveryCapability))) {
-		throw new Error('Discovery minimumDiscoveryCapability must be numeric');
+	if (catalogue.minimumDiscoveryCapability != null) {
+		const minimumCapability = Number(catalogue.minimumDiscoveryCapability);
+		if (!Number.isFinite(minimumCapability)) throw new Error('Discovery minimumDiscoveryCapability must be numeric');
+		if (minimumCapability > HOME_LAB_DISCOVERY_CAPABILITY) {
+			throw new Error(`Discovery catalogue requires capability ${minimumCapability}; client supports ${HOME_LAB_DISCOVERY_CAPABILITY}`);
+		}
 	}
 
 	const tabIds = new Set();
