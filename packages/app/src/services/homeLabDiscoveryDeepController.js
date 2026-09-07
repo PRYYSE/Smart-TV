@@ -68,6 +68,22 @@ export class HomeLabDiscoveryDeepController {
 		this._resetData();
 	}
 
+	async loadThroughIndex(index, {maxPageLoads = 25} = {}) {
+		const parsedIndex = Number(index);
+		const targetIndex = Number.isInteger(parsedIndex) && parsedIndex > 0 ? parsedIndex : 0;
+		const pageLimit = positiveInt(maxPageLoads, 25);
+		let state = this.state;
+		let pageLoads = 0;
+
+		while (state.items.length <= targetIndex && state.hasMore && !state.error && pageLoads < pageLimit) {
+			const previousPage = state.throughPage;
+			state = await this.loadMore();
+			pageLoads += 1;
+			if (state.error || state.throughPage <= previousPage) break;
+		}
+		return state;
+	}
+
 	async _advance(forceRefresh) {
 		const beforeState = this.state;
 		if (this._loading || (this._throughPage > 0 && !beforeState.hasMore)) return beforeState;

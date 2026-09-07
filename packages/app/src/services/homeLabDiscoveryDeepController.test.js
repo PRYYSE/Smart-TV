@@ -98,4 +98,42 @@ describe('Home Lab Discovery deep controller', () => {
 		expect(state.hasMore).toBe(false);
 		expect(state.totalPages).toBe(1);
 	});
+
+	test('loads enough pages to restore a remembered deep item without over-fetching', async () => {
+		const requested = [];
+		const controller = new HomeLabDiscoveryDeepController({
+			section,
+			maxEmptyPageReadAhead: 1,
+			loadPage: async (_, {page}) => {
+				requested.push(page);
+				return result(page, [page * 2 - 1, page * 2], 5);
+			}
+		});
+
+		await controller.loadInitial();
+		const restored = await controller.loadThroughIndex(4);
+
+		expect(requested).toEqual([1, 2, 3]);
+		expect(restored.items.map(item => item.id)).toEqual([1, 2, 3, 4, 5, 6]);
+		expect(restored.throughPage).toBe(3);
+	});
+
+	test('remembered deep restoration respects the page-load safety cap', async () => {
+		const requested = [];
+		const controller = new HomeLabDiscoveryDeepController({
+			section,
+			maxEmptyPageReadAhead: 1,
+			loadPage: async (_, {page}) => {
+				requested.push(page);
+				return result(page, [page], 100);
+			}
+		});
+
+		await controller.loadInitial();
+		const restored = await controller.loadThroughIndex(50, {maxPageLoads: 2});
+
+		expect(requested).toEqual([1, 2, 3]);
+		expect(restored.throughPage).toBe(3);
+		expect(restored.hasMore).toBe(true);
+	});
 });

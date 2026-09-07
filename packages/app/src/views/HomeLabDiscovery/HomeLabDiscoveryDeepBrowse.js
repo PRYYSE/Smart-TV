@@ -35,7 +35,7 @@ const mediaBackdropFor = (item) => item?.backdrop_path || item?.backdropPath;
 const mediaPosterFor = (item) => item?.poster_path || item?.posterPath;
 
 const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) => {
-	const {serverUrl, accessToken} = useAuth();
+	const {serverUrl, accessToken, user} = useAuth();
 	const {settings} = useSettings();
 	const [section, setSection] = useState(null);
 	const [sectionError, setSectionError] = useState(null);
@@ -49,6 +49,8 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	const loadMoreRef = useRef(false);
 	const focusScheduledRef = useRef(false);
 	const backdropTimerRef = useRef(null);
+	const gridScrollToRef = useRef(null);
+	const focusMemoryKey = `${serverUrl || ''}|${user?.Id || 'user'}|${sectionId || ''}`;
 
 	useEffect(() => {
 		if (!backHandlerRef) return;
@@ -62,6 +64,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	useEffect(() => {
 		let stale = false;
 		focusScheduledRef.current = false;
+		gridScrollToRef.current = null;
 		setSection(null);
 		setSectionError(null);
 		setBrowseState(null);
@@ -112,11 +115,18 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		if (!controller) return;
 		let stale = false;
 		setIsLoading(true);
-		controller.loadInitial().then(state => {
+		controller.loadInitial().then(async initialState => {
+			if (stale) return;
+			const remembered = Number(deepFocusMemory.get(focusMemoryKey) ?? 0);
+			let state = initialState;
+			if (remembered > 0 && state.items.length <= remembered && state.hasMore && !state.error) {
+				state = await controller.loadThroughIndex(remembered);
+			}
 			if (stale) return;
 			itemsRef.current = state.items;
 			setBrowseState(state);
-			setFocusedItem(state.items[0] || null);
+			const focusIndex = Math.max(0, Math.min(remembered, state.items.length - 1));
+			setFocusedItem(state.items[focusIndex] || state.items[0] || null);
 			setIsLoading(false);
 		}).catch(error => {
 			if (stale) return;
@@ -124,16 +134,20 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 			setIsLoading(false);
 		});
 		return () => { stale = true; };
-	}, [controller]);
+	}, [controller, focusMemoryKey]);
 
 	useEffect(() => {
 		if (!browseState?.items?.length || focusScheduledRef.current) return;
 		focusScheduledRef.current = true;
-		const remembered = Number(deepFocusMemory.get(sectionId) ?? 0);
+		const remembered = Number(deepFocusMemory.get(focusMemoryKey) ?? 0);
 		const index = Math.max(0, Math.min(remembered, browseState.items.length - 1));
-		const timer = setTimeout(() => Spotlight.focus(`homelab-deep-item-${index}`), 120);
+		const timer = setTimeout(() => {
+			const scrollTo = gridScrollToRef.current;
+			if (scrollTo) scrollTo({index, focus: true, animate: false});
+			else Spotlight.focus(`homelab-deep-item-${index}`);
+		}, 120);
 		return () => clearTimeout(timer);
-	}, [browseState?.items?.length, sectionId]);
+	}, [browseState?.items?.length, focusMemoryKey]);
 
 	useEffect(() => () => {
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
@@ -177,6 +191,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	}, [browseState?.items?.length, controller]);
 
 	const retryCatalogue = useCallback(() => setCatalogueRetryNonce(value => value + 1), []);
+	const captureGridScrollTo = useCallback(scrollTo => { gridScrollToRef.current = scrollTo; }, []);
 
 	const handleItemClick = useCallback((event) => {
 		const index = Number(event.currentTarget?.dataset?.index);
@@ -191,10 +206,10 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		const index = Number(event.currentTarget?.dataset?.index);
 		const item = itemsRef.current[index];
 		if (!item) return;
-		deepFocusMemory.set(sectionId, index);
+		deepFocusMemory.set(focusMemoryKey, index);
 		updateBackdrop(item);
 		if (index >= itemsRef.current.length - 8) loadMore();
-	}, [loadMore, sectionId, updateBackdrop]);
+	}, [focusMemoryKey, loadMore, updateBackdrop]);
 
 	const renderItem = useCallback(({index, ...rest}) => {
 		const item = itemsRef.current[index];
@@ -285,6 +300,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 						<>
 							<VirtualGridList
 								className={css.deepGrid}
+								cbScrollTo={captureGridScrollTo}
 								dataSize={items.length}
 								itemRenderer={renderItem}
 								itemSize={{minWidth: 190, minHeight: 350}}
