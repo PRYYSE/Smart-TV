@@ -1,6 +1,7 @@
 import {
 	findHomeLabDiscoverySection,
 	homeLabDiscoveryDeepTarget,
+	homeLabDiscoveryLandingFocusTarget,
 	parseHomeLabDiscoveryDeepTarget
 } from './homeLabDiscoveryRoute';
 
@@ -28,5 +29,21 @@ describe('Home Lab Discovery route adapter', () => {
 		};
 		expect(findHomeLabDiscoverySection(catalogue, wanted.id)).toBe(wanted);
 		expect(findHomeLabDiscoverySection(catalogue, 'missing')).toBeNull();
+	});
+
+	test('restores the exact card or See All target and clamps stale memory', () => {
+		const lanes = [
+			{items: [{id: 1}, {id: 2}, {id: 3}]},
+			{items: [{id: 4}, {id: 5}]}
+		];
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 1, itemIndex: 1}, lanes}))
+			.toBe('homelab-discovery-row-1-item-1');
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 0, target: 'see-all'}, lanes}))
+			.toBe('homelab-discovery-row-0-see-all');
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 99, itemIndex: 99}, lanes}))
+			.toBe('homelab-discovery-row-1-item-1');
+		expect(homeLabDiscoveryLandingFocusTarget({lanes}))
+			.toBe('homelab-discovery-row-0-item-0');
+		expect(homeLabDiscoveryLandingFocusTarget({lanes: []})).toBeNull();
 	});
 });
