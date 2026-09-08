@@ -1,4 +1,5 @@
 import {
+	isHomeLabDiscoverySectionExecutable,
 	loadHomeLabDiscoveryLane,
 	loadHomeLabDiscoveryPage,
 	normaliseHomeLabDiscoveryPage
@@ -78,14 +79,34 @@ describe('Home Lab Discovery lane loader', () => {
 		expect(failed.error.message).toBe('offline');
 	});
 
-	test('unsupported personalised lanes fail closed instead of fabricating results', async () => {
+	test('personalised lanes execute from Jellyfin source and still enforce availability membership', async () => {
+		const personalSection = section({
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'recent-history'},
+			availabilityMode: 'available'
+		});
+		const personalisation = {
+			load: jest.fn(async (_section, options) => ({
+				page: options.page,
+				totalPages: 1,
+				totalResults: 2,
+				displayTitle: 'Because You Watched Heat',
+				results: [
+					{id: 11, mediaType: 'movie', mediaInfo: {status: 5}},
+					{id: 12, mediaType: 'movie', mediaInfo: {status: 3}}
+				]
+			}))
+		};
+		expect(isHomeLabDiscoverySectionExecutable(personalSection, {personalisation})).toBe(true);
 		const loaded = await loadHomeLabDiscoveryLane({
-			section: section({query: {source: 'personalised', mediaType: 'movie'}}),
+			section: personalSection,
 			serverUrl: 'http://server',
 			accessToken: 'token',
+			personalisation,
+			forceRefresh: true,
 			executePlan: jest.fn()
 		});
-		expect(loaded.items).toEqual([]);
-		expect(loaded.error).toBeTruthy();
+		expect(loaded.items.map(item => item.id)).toEqual([11]);
+		expect(loaded.displayTitle).toBe('Because You Watched Heat');
+		expect(personalisation.load).toHaveBeenCalledWith(personalSection, {page: 1, forceRefresh: true});
 	});
 });

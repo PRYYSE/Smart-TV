@@ -1,5 +1,11 @@
 import {composeHomeLabDiscoveryTab} from './homeLabDiscoveryComposer';
-import {isHomeLabDiscoveryQueryExecutable} from './homeLabDiscoveryPlanner';
+import {isHomeLabDiscoverySectionExecutable} from './homeLabDiscoveryLaneLoader';
+import {
+	HomeLabDiscoveryRotationStore,
+	rotationScopeFromSessionSeed
+} from './homeLabDiscoveryRotationStore';
+
+const defaultRotationStore = new HomeLabDiscoveryRotationStore();
 
 const identityFor = (section, item) => {
 	const mediaType = item?.mediaType || item?.media_type || section?.query?.mediaType || 'unknown';
@@ -92,34 +98,40 @@ export class HomeLabDiscoveryTabController {
 		loadLane,
 		sessionSeed,
 		maxConcurrentLoads = 6,
-		sessionsSinceSeen = {},
-		isEligible = isHomeLabDiscoveryQueryExecutable,
+		sessionsSinceSeen = null,
+		isEligible = isHomeLabDiscoverySectionExecutable,
 		session = createHomeLabDiscoverySession(),
-		sharedDedupGroup
+		sharedDedupGroup,
+		rotationStore = defaultRotationStore,
+		rotationHistory = null,
+		rotationScope = null
 	}) {
 		this.tab = tab;
 		this.loadLane = loadLane;
 		this.sessionSeed = String(sessionSeed || '');
 		this.maxConcurrentLoads = Math.max(1, Number(maxConcurrentLoads) || 1);
-		this.sessionsSinceSeen = sessionsSinceSeen || {};
+		this.sessionsSinceSeen = sessionsSinceSeen;
 		this.isEligible = isEligible;
 		this.session = session;
 		this.sharedDedupGroup = sharedDedupGroup || `tab:${tab?.id || 'unknown'}`;
 		this.refreshNonce = 0;
+		this.rotationStore = rotationStore;
+		this.rotationScope = rotationScope || rotationScopeFromSessionSeed(this.sessionSeed);
+		this.rotationHistory = rotationHistory || this.rotationStore.loadTab(this.rotationScope, tab?.id || 'unknown');
 	}
 
-	async load({rotate = false} = {}) {
+	async load({rotate = false, forceRefresh = false} = {}) {
 		if (rotate) this.refreshNonce += 1;
 		const selectedSections = composeHomeLabDiscoveryTab(this.tab, {
 			sessionSeed: this.sessionSeed,
 			refreshNonce: this.refreshNonce,
-			sessionsSinceSeen: this.sessionsSinceSeen,
+			sessionsSinceSeen: this.sessionsSinceSeen || this.rotationHistory.sessionsSinceSeen,
 			isEligible: this.isEligible
 		});
 		const resultsBySectionId = new Map();
 		await mapBounded(selectedSections, this.maxConcurrentLoads, async (section) => {
 			try {
-				resultsBySectionId.set(section.id, await this.loadLane(section));
+				resultsBySectionId.set(section.id, await this.loadLane(section, {forceRefresh}));
 			} catch (error) {
 				resultsBySectionId.set(section.id, {
 					section,
@@ -134,6 +146,10 @@ export class HomeLabDiscoveryTabController {
 			session: this.session,
 			sharedDedupGroup: this.sharedDedupGroup
 		});
+		this.rotationHistory.commitSession(
+			lanes.filter(lane => lane.isUsable).map(lane => lane.section?.id).filter(Boolean)
+		);
+		this._persistRotation();
 		return {
 			selectedSections,
 			lanes,
@@ -144,11 +160,21 @@ export class HomeLabDiscoveryTabController {
 	}
 
 	refresh() {
-		return this.load({rotate: true});
+		return this.load({rotate: true, forceRefresh: true});
 	}
 
 	resetSession() {
 		this.refreshNonce = 0;
 		this.session.reset();
+		this.rotationHistory.clear();
+		this._persistRotation();
+	}
+
+	_persistRotation() {
+		try {
+			this.rotationStore.saveTab(this.rotationScope, this.tab?.id || 'unknown', this.rotationHistory);
+		} catch (_error) {
+			// Rotation persistence is best effort and must never break Discovery.
+		}
 	}
 }

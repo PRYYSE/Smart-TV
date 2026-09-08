@@ -3,6 +3,7 @@ import {
 	createHomeLabDiscoverySession,
 	presentHomeLabDiscoveryLanes
 } from './homeLabDiscoveryTabController';
+import {HomeLabDiscoveryRotationHistory} from './homeLabDiscoveryRotationStore';
 
 const section = (id, overrides = {}) => ({
 	id,
@@ -86,33 +87,42 @@ describe('Home Lab Discovery tab controller', () => {
 		expect(presented[1].items.map(item => item.id)).toEqual([4, 2]);
 	});
 
-	test('refresh advances deterministic rotation and reset clears transient novelty', async () => {
+	test('refresh advances deterministic rotation, refreshes source, and reset persists cleared history', async () => {
 		const sections = Array.from({length: 12}, (_, index) => section(`s-${index}`));
+		const history = new HomeLabDiscoveryRotationHistory();
+		const rotationStore = {loadTab: jest.fn(() => history), saveTab: jest.fn(() => true)};
+		const loadLane = jest.fn(async current => lane(current, [Number(current.id.slice(2)) + 1]));
 		const controller = new HomeLabDiscoveryTabController({
 			tab: {...tab(sections), initialLaneBudget: 5, minimumLaneCount: 3},
-			sessionSeed: 'rotate',
+			sessionSeed: 'http://server|user-1|catalogue|movies',
 			isEligible: () => true,
-			loadLane: async current => lane(current, [Number(current.id.slice(2)) + 1])
+			loadLane,
+			rotationStore
 		});
 		const first = await controller.load();
 		const refreshed = await controller.refresh();
 		expect(controller.refreshNonce).toBe(1);
 		expect(refreshed.selectedSections.map(item => item.id)).not.toEqual(first.selectedSections.map(item => item.id));
+		expect(loadLane.mock.calls.some(call => call[1]?.forceRefresh === true)).toBe(true);
+		expect(history.sessionNumber).toBe(2);
+		expect(rotationStore.saveTab).toHaveBeenCalled();
 		controller.resetSession();
 		expect(controller.refreshNonce).toBe(0);
+		expect(history.toJSON()).toEqual({sessionNumber: 0, lastSeenSession: {}});
+		expect(rotationStore.saveTab).toHaveBeenLastCalledWith('http://server|user-1', 'movies', history);
 	});
 
-	test('unsupported webOS query sources are excluded before any I/O', async () => {
+	test('personalised rows are eligible alongside Seerr rows before I/O starts', async () => {
 		const supported = section('supported');
-		const personal = section('personal', {query: {source: 'personalised', mediaType: 'movie'}});
-		const loadLane = jest.fn(async current => lane(current, [1]));
+		const personal = section('personal', {query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'recent-history'}});
+		const loadLane = jest.fn(async current => lane(current, [current.id === 'supported' ? 1 : 2]));
 		const controller = new HomeLabDiscoveryTabController({
 			tab: tab([supported, personal]),
 			sessionSeed: 'eligibility',
 			loadLane
 		});
 		const result = await controller.load();
-		expect(result.selectedSections.map(item => item.id)).toEqual(['supported']);
-		expect(loadLane).toHaveBeenCalledTimes(1);
+		expect(result.selectedSections.map(item => item.id)).toEqual(['supported', 'personal']);
+		expect(loadLane).toHaveBeenCalledTimes(2);
 	});
 });
