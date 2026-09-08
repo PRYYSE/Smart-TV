@@ -279,6 +279,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		const posterPath = mediaPosterFor(item);
 		const imageUrl = posterPath ? seerrApi.getImageUrl(posterPath, 'w342') : null;
 		const status = Number(item?.mediaInfo?.status || 0);
+		const itemStyle = deepCardStyle ? {...rest.style, ...deepCardStyle} : rest.style;
 		return (
 			<SpottableDiv
 				{...rest}
@@ -287,7 +288,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 				onClick={handleItemClick}
 				onFocus={handleItemFocus}
 				spotlightId={`homelab-deep-item-${index}`}
-				style={deepCardStyle}
+				style={itemStyle}
 			>
 				<div className={css.deepPosterContainer} style={deepPosterStyle}>
 					<HomeLabDiscoveryPoster imageUrl={imageUrl} title={title} />
