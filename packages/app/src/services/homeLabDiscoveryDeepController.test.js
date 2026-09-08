@@ -136,4 +136,44 @@ describe('Home Lab Discovery deep controller', () => {
 		expect(restored.throughPage).toBe(3);
 		expect(restored.hasMore).toBe(true);
 	});
+
+	test('hydrates a retained snapshot without refetching already loaded pages', async () => {
+		const first = new HomeLabDiscoveryDeepController({
+			section,
+			maxEmptyPageReadAhead: 1,
+			loadPage: async (_, {page}) => result(page, [page * 2 - 1, page * 2], 3)
+		});
+		await first.loadInitial();
+		await first.loadMore();
+		const snapshot = first.snapshot();
+
+		const loadPage = jest.fn(async (_, {page}) => result(page, [page * 2 - 1, page * 2], 3));
+		const restored = new HomeLabDiscoveryDeepController({section, loadPage, initialState: snapshot});
+		expect(restored.state.items.map(item => item.id)).toEqual([1, 2, 3, 4]);
+		expect(restored.state.throughPage).toBe(2);
+
+		await restored.loadThroughIndex(3);
+		expect(loadPage).not.toHaveBeenCalled();
+		const next = await restored.loadMore();
+		expect(loadPage).toHaveBeenCalledWith(section, {page: 3, forceRefresh: false});
+		expect(next.items.map(item => item.id)).toEqual([1, 2, 3, 4, 5, 6]);
+	});
+
+	test('an obsolete in-flight load cannot overwrite a newer refresh generation', async () => {
+		let resolveOld;
+		const loadPage = jest.fn((_, {forceRefresh}) => {
+			if (forceRefresh) return Promise.resolve(result(1, [9], 1));
+			return new Promise(resolve => { resolveOld = resolve; });
+		});
+		const controller = new HomeLabDiscoveryDeepController({section, loadPage, maxEmptyPageReadAhead: 1});
+
+		const oldLoad = controller.loadInitial();
+		await Promise.resolve();
+		const refreshed = await controller.refresh();
+		expect(refreshed.items.map(item => item.id)).toEqual([9]);
+
+		resolveOld(result(1, [1], 1));
+		await oldLoad;
+		expect(controller.state.items.map(item => item.id)).toEqual([9]);
+	});
 });
