@@ -101,7 +101,12 @@ export const loadHomeLabDiscoveryLane = async ({
 }) => {
 	const previewLimit = positiveInt(section?.previewLimit, 20);
 	const minItems = positiveInt(section?.minItems, 8);
-	const scanLimit = positiveInt(maxPagesPerScan, 6);
+	// Personalised pages can now expand incrementally for deep browse. Keep the
+	// landing preview deliberately to one logical page so opening a tab never
+	// fans out extra recommendation requests merely to chase previewLimit.
+	const scanLimit = section?.query?.source === 'personalised'
+		? 1
+		: positiveInt(maxPagesPerScan, 6);
 	const items = [];
 	const seen = new Set();
 	let throughPage = 0;
