@@ -10,16 +10,21 @@ import {useSeerr} from '../../context/SeerrContext';
 import {useSettings} from '../../context/SettingsContext';
 import {loadHomeLabDiscoveryCatalogue} from '../../services/homeLabDiscoveryCatalogue';
 import {loadHomeLabDiscoveryLane} from '../../services/homeLabDiscoveryLaneLoader';
+import {analyseHomeLabDiscoveryQuality} from '../../services/homeLabDiscoveryQuality';
 import {homeLabDiscoveryDeepTarget, homeLabDiscoveryLandingFocusTarget} from '../../services/homeLabDiscoveryRoute';
 import {
 	HomeLabDiscoveryTabController,
 	homeLabDiscoveryTabResultState,
 	retainHomeLabDiscoveryRefreshFallback
 } from '../../services/homeLabDiscoveryTabController';
+import {homeLabDiscoveryVisualPolicy} from '../../services/homeLabDiscoveryVisualPolicy';
 import seerrApi from '../../services/seerrApi';
+import serverLogger from '../../services/serverLogger';
 import {KEYS} from '../../utils/keys';
+import {getDetectedPerfTier} from '../../utils/perfTier';
 import {seerrSelectionMediaId} from '../../utils/seerrTarget';
 import LegacySeerrDiscover from '../SeerrDiscover/SeerrDiscover';
+import HomeLabDiscoveryPoster from './HomeLabDiscoveryPoster';
 
 import css from './HomeLabDiscovery.module.less';
 
@@ -72,8 +77,8 @@ const DiscoveryMediaCard = memo(function DiscoveryMediaCard({
 	const status = Number(item?.mediaInfo?.status || 0);
 
 	const handleSelect = useCallback(() => {
-		const tmdbId = mediaIdFor(item);
-		if (tmdbId == null) return;
+		const tmdbId = Number(mediaIdFor(item));
+		if (!Number.isFinite(tmdbId) || tmdbId <= 0) return;
 		const mediaId = seerrSelectionMediaId({
 			tmdbId,
 			jellyfinMediaId: item?.mediaInfo?.jellyfinMediaId
@@ -91,11 +96,7 @@ const DiscoveryMediaCard = memo(function DiscoveryMediaCard({
 			spotlightId={spotlightId}
 		>
 			<div className={css.posterContainer}>
-				{posterUrl ? (
-					<img className={css.poster} src={posterUrl} alt={title} loading="lazy" />
-				) : (
-					<div className={css.noPoster}>{title.slice(0, 1)}</div>
-				)}
+				<HomeLabDiscoveryPoster imageUrl={posterUrl} title={title} />
 				<div className={`${css.mediaTypeBadge} ${mediaType === 'movie' ? css.movieBadge : css.seriesBadge}`}>
 					{mediaType === 'movie' ? $L('MOVIE') : $L('SERIES')}
 				</div>
@@ -117,7 +118,8 @@ const DiscoveryRow = memo(function DiscoveryRow({
 	onNavigateUp,
 	onNavigateDown,
 	onOpenDeep,
-	onRowFocus
+	onRowFocus,
+	scrollBehavior
 }) {
 	const scrollerRef = useRef(null);
 	const items = lane?.items || [];
@@ -154,8 +156,8 @@ const DiscoveryRow = memo(function DiscoveryRow({
 			else if (cardRect.right > scrollerRect.right) scroller.scrollLeft += cardRect.right - scrollerRect.right + 50;
 		}
 		const row = event.target.closest(`.${css.contentRow}`);
-		row?.scrollIntoView({behavior: 'smooth', block: 'center'});
-	}, [onRowFocus, rowIndex]);
+		row?.scrollIntoView({behavior: scrollBehavior, block: 'center'});
+	}, [onRowFocus, rowIndex, scrollBehavior]);
 
 	const handleSeeAll = useCallback(() => onOpenDeep?.(section, rowIndex), [onOpenDeep, rowIndex, section]);
 	const handleSeeAllFocus = useCallback(() => onRowFocus?.(rowIndex, {target: 'see-all'}), [onRowFocus, rowIndex]);
@@ -202,6 +204,12 @@ const DiscoveryRow = memo(function DiscoveryRow({
 const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, onSelectItem, onSelectGenre, onOpenRequests}) => {
 	const {settings} = useSettings();
 	const tabs = useMemo(() => catalogue.tabs || [], [catalogue.tabs]);
+	const visualPolicy = useMemo(() => homeLabDiscoveryVisualPolicy({
+		performanceMode: settings.performanceMode || 'auto',
+		detectedTier: getDetectedPerfTier(),
+		viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 1080,
+		configuredBlur: settings.backdropBlurHome
+	}), [settings.backdropBlurHome, settings.performanceMode]);
 	const viewKey = `${serverUrl}|${userId || 'user'}|${catalogue.generatedAt || catalogue.catalogueVersion || catalogue.schemaVersion}`;
 
 	if (retainedLanding.key !== viewKey) {
@@ -288,6 +296,15 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 	}, [activeTab, activeTabIndex, loadTab, loadingByTab, tabResults]);
 
 	useEffect(() => {
+		if (!activeTab || !activeResult) return;
+		serverLogger.debug(
+			serverLogger.LOG_CATEGORIES.APP,
+			'Home Lab Discovery quality snapshot',
+			{tabId: activeTab.id, ...analyseHomeLabDiscoveryQuality(activeResult)}
+		);
+	}, [activeResult, activeTab]);
+
+	useEffect(() => {
 		if (!activeResult || activeLoading || !focusAfterLoadRef.current || !activeTab) return;
 		const target = homeLabDiscoveryLandingFocusTarget({
 			memory: lastFocusByTab[activeTab.id],
@@ -315,11 +332,15 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 		setFocusedItem(item);
 		if (activeTab) lastFocusByTab[activeTab.id] = {rowIndex, itemIndex, target: 'item'};
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
+		if (settings.showHomeBackdrop === false) {
+			setBackdropUrl('');
+			return;
+		}
 		backdropTimerRef.current = setTimeout(() => {
 			const path = mediaBackdropFor(item);
-			setBackdropUrl(path ? seerrApi.getImageUrl(path, 'w1280') : '');
-		}, 130);
-	}, [activeTab]);
+			setBackdropUrl(path ? seerrApi.getImageUrl(path, visualPolicy.backdropSize) : '');
+		}, visualPolicy.backdropDebounceMs);
+	}, [activeTab, settings.showHomeBackdrop, visualPolicy.backdropDebounceMs, visualPolicy.backdropSize]);
 
 	const focusActiveRow = useCallback(() => {
 		if (!activeTab) return false;
@@ -379,15 +400,15 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 			return;
 		}
 		Spotlight.focus(`homelab-discovery-row-${fromRowIndex - 1}`);
-		document.querySelector(`[data-row-index="${fromRowIndex - 1}"]`)?.scrollIntoView({behavior: 'smooth', block: 'center'});
-	}, [activeTabIndex]);
+		document.querySelector(`[data-row-index="${fromRowIndex - 1}"]`)?.scrollIntoView({behavior: visualPolicy.scrollBehavior, block: 'center'});
+	}, [activeTabIndex, visualPolicy.scrollBehavior]);
 
 	const handleNavigateDown = useCallback((fromRowIndex) => {
 		const next = fromRowIndex + 1;
 		if (next >= visibleLanes.length) return;
 		Spotlight.focus(`homelab-discovery-row-${next}`);
-		document.querySelector(`[data-row-index="${next}"]`)?.scrollIntoView({behavior: 'smooth', block: 'center'});
-	}, [visibleLanes.length]);
+		document.querySelector(`[data-row-index="${next}"]`)?.scrollIntoView({behavior: visualPolicy.scrollBehavior, block: 'center'});
+	}, [visibleLanes.length, visualPolicy.scrollBehavior]);
 
 	const handleOpenDeep = useCallback((section, rowIndex) => {
 		if (!section || !onSelectGenre) return;
@@ -411,7 +432,9 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 							className={css.backdropImage}
 							style={{
 								backgroundImage: `url(${backdropUrl})`,
-								filter: settings.backdropBlurHome > 0 ? `blur(${settings.backdropBlurHome}px)` : 'none'
+								filter: visualPolicy.backdropBlur > 0 ? `blur(${visualPolicy.backdropBlur}px)` : 'none',
+								transition: visualPolicy.constrainedMotion ? 'none' : undefined,
+								transform: visualPolicy.constrainedMotion ? 'none' : undefined
 							}}
 						/>
 					)}
@@ -473,6 +496,7 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 									onNavigateDown={handleNavigateDown}
 									onOpenDeep={handleOpenDeep}
 									onRowFocus={handleRowFocus}
+									scrollBehavior={visualPolicy.scrollBehavior}
 								/>
 							))}
 							{activeResult?.refreshFailure ? (
