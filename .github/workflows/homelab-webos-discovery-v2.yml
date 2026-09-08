@@ -34,7 +34,7 @@ jobs:
         run: npm ci
 
       - name: Discovery service tests
-        run: npm test --workspace=@moonfin/app -- --runInBand packages/app/src/services/homeLabDiscoveryPlanner.test.js packages/app/src/services/homeLabDiscoveryCatalogue.test.js packages/app/src/services/homeLabDiscoveryClient.test.js packages/app/src/services/homeLabDiscoveryComposer.test.js packages/app/src/services/homeLabDiscoveryMembership.test.js packages/app/src/services/homeLabDiscoveryPersonalisation.test.js packages/app/src/services/homeLabDiscoveryRotationStore.test.js packages/app/src/services/homeLabDiscoveryLaneLoader.test.js packages/app/src/services/homeLabDiscoveryTabController.test.js packages/app/src/services/homeLabDiscoveryDeepController.test.js packages/app/src/services/homeLabDiscoveryRoute.test.js
+        run: npm test --workspace=@moonfin/app -- --runInBand packages/app/src/services/homeLabDiscoveryPlanner.test.js packages/app/src/services/homeLabDiscoveryCatalogue.test.js packages/app/src/services/homeLabDiscoveryClient.test.js packages/app/src/services/homeLabDiscoveryComposer.test.js packages/app/src/services/homeLabDiscoveryMembership.test.js packages/app/src/services/homeLabDiscoveryPersonalisation.test.js packages/app/src/services/homeLabDiscoveryRotationStore.test.js packages/app/src/services/homeLabDiscoveryLaneLoader.test.js packages/app/src/services/homeLabDiscoveryTabController.test.js packages/app/src/services/homeLabDiscoveryDeepState.test.js packages/app/src/services/homeLabDiscoveryDeepController.test.js packages/app/src/services/homeLabDiscoveryRoute.test.js
 
       - name: Build webOS package
         run: npm run build:webos
