@@ -10,7 +10,7 @@ import {useSeerr} from '../../context/SeerrContext';
 import {useSettings} from '../../context/SettingsContext';
 import {loadHomeLabDiscoveryCatalogue} from '../../services/homeLabDiscoveryCatalogue';
 import {loadHomeLabDiscoveryLane} from '../../services/homeLabDiscoveryLaneLoader';
-import {homeLabDiscoveryDeepTarget} from '../../services/homeLabDiscoveryRoute';
+import {homeLabDiscoveryDeepTarget, homeLabDiscoveryLandingFocusTarget} from '../../services/homeLabDiscoveryRoute';
 import {HomeLabDiscoveryTabController} from '../../services/homeLabDiscoveryTabController';
 import seerrApi from '../../services/seerrApi';
 import {KEYS} from '../../utils/keys';
@@ -31,7 +31,7 @@ const ToolbarContainer = SpotlightContainerDecorator({
 
 let retainedCatalogue = {serverKey: null, catalogue: null};
 let retainedLanding = {key: null, activeTabId: null, tabResults: {}};
-const lastFocusedRowByTab = {};
+const lastFocusByTab = {};
 
 const mediaTypeFor = (item, fallback) => {
 	const value = item?.media_type || item?.mediaType || fallback;
@@ -126,8 +126,9 @@ const DiscoveryRow = memo(function DiscoveryRow({
 	}, [onNavigateDown, onNavigateUp, rowIndex]);
 
 	const handleContainerFocus = useCallback((event) => {
-		onRowFocus?.(rowIndex);
 		const card = event.target.closest(`.${css.mediaCard}, .${css.seeAllCard}`);
+		if (!card) onRowFocus?.(rowIndex);
+		else if (card.classList.contains(css.seeAllCard)) onRowFocus?.(rowIndex, {target: 'see-all'});
 		const scroller = scrollerRef.current;
 		if (card && scroller) {
 			const cardRect = card.getBoundingClientRect();
@@ -159,13 +160,14 @@ const DiscoveryRow = memo(function DiscoveryRow({
 							item={item}
 							fallbackMediaType={section.query?.mediaType}
 							onSelect={onSelectItem}
-							onFocus={onFocusItem}
+							onFocus={(focused) => onFocusItem?.(focused, rowIndex, index)}
 							spotlightId={`homelab-discovery-row-${rowIndex}-item-${index}`}
 						/>
 					))}
 					<SpottableButton
 						className={css.seeAllCard}
 						onClick={handleSeeAll}
+						onFocus={() => onRowFocus?.(rowIndex, {target: 'see-all'})}
 						spotlightId={`homelab-discovery-row-${rowIndex}-see-all`}
 					>
 						<span className={css.seeAllIcon}>→</span>
@@ -256,14 +258,16 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 
 	useEffect(() => {
 		if (!activeResult || !visibleLanes.length || activeLoading || !focusAfterLoadRef.current || !activeTab) return;
-		const remembered = Number(lastFocusedRowByTab[activeTab.id] ?? 0);
-		const rowIndex = Math.max(0, Math.min(remembered, visibleLanes.length - 1));
+		const target = homeLabDiscoveryLandingFocusTarget({
+			memory: lastFocusByTab[activeTab.id],
+			lanes: visibleLanes
+		});
 		const timer = setTimeout(() => {
-			Spotlight.focus(`homelab-discovery-row-${rowIndex}`);
+			if (target) Spotlight.focus(target);
 			focusAfterLoadRef.current = false;
 		}, 100);
 		return () => clearTimeout(timer);
-	}, [activeLoading, activeResult, activeTab, visibleLanes.length]);
+	}, [activeLoading, activeResult, activeTab, visibleLanes]);
 
 	useEffect(() => {
 		if (focusedItem || !visibleLanes.length) return;
@@ -275,21 +279,24 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
 	}, []);
 
-	const handleFocusItem = useCallback((item) => {
+	const handleFocusItem = useCallback((item, rowIndex, itemIndex) => {
 		setFocusedItem(item);
+		if (activeTab) lastFocusByTab[activeTab.id] = {rowIndex, itemIndex, target: 'item'};
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
 		backdropTimerRef.current = setTimeout(() => {
 			const path = mediaBackdropFor(item);
 			setBackdropUrl(path ? seerrApi.getImageUrl(path, 'w1280') : '');
 		}, 130);
-	}, []);
+	}, [activeTab]);
 
 	const focusActiveRow = useCallback(() => {
 		if (!visibleLanes.length || !activeTab) return;
-		const remembered = Number(lastFocusedRowByTab[activeTab.id] ?? 0);
-		const rowIndex = Math.max(0, Math.min(remembered, visibleLanes.length - 1));
-		Spotlight.focus(`homelab-discovery-row-${rowIndex}`);
-	}, [activeTab, visibleLanes.length]);
+		const target = homeLabDiscoveryLandingFocusTarget({
+			memory: lastFocusByTab[activeTab.id],
+			lanes: visibleLanes
+		});
+		if (target) Spotlight.focus(target);
+	}, [activeTab, visibleLanes]);
 
 	const handleToolbarKeyDown = useCallback((event) => {
 		if (event.keyCode === KEYS.UP) {
@@ -326,8 +333,8 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 		loadTab(activeTabIndex, true);
 	}, [activeTab, activeTabIndex, loadTab]);
 
-	const handleRowFocus = useCallback((rowIndex) => {
-		if (activeTab) lastFocusedRowByTab[activeTab.id] = rowIndex;
+	const handleRowFocus = useCallback((rowIndex, detail = {}) => {
+		if (activeTab) lastFocusByTab[activeTab.id] = {rowIndex, ...detail};
 	}, [activeTab]);
 
 	const handleNavigateUp = useCallback((fromRowIndex) => {
@@ -348,7 +355,7 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 
 	const handleOpenDeep = useCallback((section, rowIndex) => {
 		if (!section || !onSelectGenre) return;
-		if (activeTab) lastFocusedRowByTab[activeTab.id] = rowIndex;
+		if (activeTab) lastFocusByTab[activeTab.id] = {rowIndex, target: 'see-all'};
 		onSelectGenre(homeLabDiscoveryDeepTarget(section.id), section.title, section.query?.mediaType || 'movie');
 	}, [activeTab, onSelectGenre]);
 
