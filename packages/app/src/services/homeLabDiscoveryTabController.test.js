@@ -3,6 +3,12 @@ import {
 	createHomeLabDiscoverySession,
 	presentHomeLabDiscoveryLanes
 } from './homeLabDiscoveryTabController';
+import {
+	clearHomeLabDiscoveryDeepState,
+	homeLabDiscoveryDeepStateKey,
+	readHomeLabDiscoveryDeepState,
+	rememberHomeLabDiscoveryDeepState
+} from './homeLabDiscoveryDeepState';
 import {HomeLabDiscoveryRotationHistory} from './homeLabDiscoveryRotationStore';
 
 const section = (id, overrides = {}) => ({
@@ -37,6 +43,8 @@ const lane = (sectionValue, ids) => ({
 });
 
 describe('Home Lab Discovery tab controller', () => {
+	beforeEach(() => clearHomeLabDiscoveryDeepState());
+
 	test('presentation is independent of reverse asynchronous completion order', async () => {
 		const sections = [section('a'), section('b'), section('c')];
 		const resolvers = {};
@@ -87,7 +95,7 @@ describe('Home Lab Discovery tab controller', () => {
 		expect(presented[1].items.map(item => item.id)).toEqual([4, 2]);
 	});
 
-	test('refresh advances deterministic rotation, refreshes source, and reset persists cleared history', async () => {
+	test('refresh advances rotation, refreshes source, clears stale deep state, and reset persists history', async () => {
 		const sections = Array.from({length: 12}, (_, index) => section(`s-${index}`));
 		const history = new HomeLabDiscoveryRotationHistory();
 		const rotationStore = {loadTab: jest.fn(() => history), saveTab: jest.fn(() => true)};
@@ -99,11 +107,19 @@ describe('Home Lab Discovery tab controller', () => {
 			loadLane,
 			rotationStore
 		});
+		const deepKey = homeLabDiscoveryDeepStateKey({
+			serverUrl: 'http://server',
+			userId: 'user-1',
+			section: section('deep')
+		});
+		rememberHomeLabDiscoveryDeepState(deepKey, {throughPage: 3});
+
 		const first = await controller.load();
 		const refreshed = await controller.refresh();
 		expect(controller.refreshNonce).toBe(1);
 		expect(refreshed.selectedSections.map(item => item.id)).not.toEqual(first.selectedSections.map(item => item.id));
 		expect(loadLane.mock.calls.some(call => call[1]?.forceRefresh === true)).toBe(true);
+		expect(readHomeLabDiscoveryDeepState(deepKey)).toBeNull();
 		expect(history.sessionNumber).toBe(2);
 		expect(rotationStore.saveTab).toHaveBeenCalled();
 		controller.resetSession();
