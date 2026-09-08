@@ -109,4 +109,24 @@ describe('Home Lab Discovery lane loader', () => {
 		expect(loaded.displayTitle).toBe('Because You Watched Heat');
 		expect(personalisation.load).toHaveBeenCalledWith(personalSection, {page: 1, forceRefresh: true});
 	});
+
+	test('unsupported personalised semantics fail closed before loading a fake lane', async () => {
+		const personalSection = section({
+			id: 'weekend-binge',
+			query: {source: 'personalised', mediaType: 'tv', seedStrategy: 'weekend-binge'}
+		});
+		const personalisation = {
+			supports: jest.fn(() => false),
+			load: jest.fn()
+		};
+		expect(isHomeLabDiscoverySectionExecutable(personalSection, {personalisation})).toBe(false);
+		await expect(loadHomeLabDiscoveryPage({
+			section: personalSection,
+			serverUrl: 'http://server',
+			accessToken: 'token',
+			personalisation,
+			executePlan: jest.fn()
+		})).rejects.toThrow('no supported personalisation source');
+		expect(personalisation.load).not.toHaveBeenCalled();
+	});
 });
