@@ -29,3 +29,22 @@ export const findHomeLabDiscoverySection = (catalogue, sectionId) => {
 	}
 	return null;
 };
+
+export const homeLabDiscoveryLandingFocusTarget = ({memory, lanes, fallbackRow = 0} = {}) => {
+	const visible = Array.isArray(lanes) ? lanes : [];
+	if (!visible.length) return null;
+	const rememberedRow = Number(memory?.rowIndex);
+	const baseRow = Number.isInteger(rememberedRow) ? rememberedRow : Number(fallbackRow) || 0;
+	const rowIndex = Math.max(0, Math.min(baseRow, visible.length - 1));
+	const itemCount = Array.isArray(visible[rowIndex]?.items) ? visible[rowIndex].items.length : 0;
+
+	if (memory?.target === 'see-all') return `homelab-discovery-row-${rowIndex}-see-all`;
+	if (itemCount > 0) {
+		const rememberedItem = Number(memory?.itemIndex);
+		const itemIndex = Number.isInteger(rememberedItem)
+			? Math.max(0, Math.min(rememberedItem, itemCount - 1))
+			: 0;
+		return `homelab-discovery-row-${rowIndex}-item-${itemIndex}`;
+	}
+	return `homelab-discovery-row-${rowIndex}`;
+};
