@@ -31,7 +31,10 @@ export const isHomeLabDiscoverySectionExecutable = (
 	section,
 	{personalisation = defaultHomeLabDiscoveryPersonalisation} = {}
 ) => {
-	if (section?.query?.source === 'personalised') return Boolean(personalisation);
+	if (section?.query?.source === 'personalised') {
+		if (!personalisation || typeof personalisation.load !== 'function') return false;
+		return typeof personalisation.supports === 'function' ? personalisation.supports(section) : true;
+	}
 	return isHomeLabDiscoveryQueryExecutable(section);
 };
 
@@ -61,8 +64,8 @@ export const loadHomeLabDiscoveryPage = async ({
 }) => {
 	const safePage = positiveInt(page, 1);
 	if (section?.query?.source === 'personalised') {
-		if (!personalisation || typeof personalisation.load !== 'function') {
-			throw new Error(`Discovery section ${section?.id || 'unknown'} has no personalisation source on webOS`);
+		if (!personalisation || typeof personalisation.load !== 'function' || (typeof personalisation.supports === 'function' && !personalisation.supports(section))) {
+			throw new Error(`Discovery section ${section?.id || 'unknown'} has no supported personalisation source on webOS`);
 		}
 		const personalisedPayload = await personalisation.load(section, {
 			page: safePage,
