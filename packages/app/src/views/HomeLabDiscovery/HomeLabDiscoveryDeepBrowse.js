@@ -9,6 +9,11 @@ import {useAuth} from '../../context/AuthContext';
 import {useSettings} from '../../context/SettingsContext';
 import {loadHomeLabDiscoveryCatalogue} from '../../services/homeLabDiscoveryCatalogue';
 import {HomeLabDiscoveryDeepController} from '../../services/homeLabDiscoveryDeepController';
+import {
+	homeLabDiscoveryDeepStateKey,
+	readHomeLabDiscoveryDeepState,
+	rememberHomeLabDiscoveryDeepState
+} from '../../services/homeLabDiscoveryDeepState';
 import {loadHomeLabDiscoveryPage} from '../../services/homeLabDiscoveryLaneLoader';
 import {findHomeLabDiscoverySection} from '../../services/homeLabDiscoveryRoute';
 import seerrApi from '../../services/seerrApi';
@@ -18,8 +23,6 @@ import css from './HomeLabDiscovery.module.less';
 const SpottableDiv = Spottable('div');
 const SpottableButton = Spottable('button');
 const deepFocusMemory = new Map();
-const deepStateMemory = new Map();
-const MAX_DEEP_STATE_ENTRIES = 12;
 
 const mediaTypeFor = (item, fallback) => {
 	const value = item?.media_type || item?.mediaType || fallback;
@@ -35,33 +38,6 @@ const mediaYearFor = (item) => {
 };
 const mediaBackdropFor = (item) => item?.backdrop_path || item?.backdropPath;
 const mediaPosterFor = (item) => item?.poster_path || item?.posterPath;
-
-const sectionRevisionFor = (section) => JSON.stringify({
-	id: section?.id || '',
-	query: section?.query || null,
-	availabilityMode: section?.availabilityMode || 'all',
-	minItems: section?.minItems || null,
-	previewLimit: section?.previewLimit || null
-});
-
-const readDeepState = (key) => {
-	if (!key || !deepStateMemory.has(key)) return null;
-	const value = deepStateMemory.get(key);
-	deepStateMemory.delete(key);
-	deepStateMemory.set(key, value);
-	return value;
-};
-
-const rememberDeepState = (key, snapshot) => {
-	if (!key || !snapshot) return;
-	deepStateMemory.delete(key);
-	deepStateMemory.set(key, snapshot);
-	while (deepStateMemory.size > MAX_DEEP_STATE_ENTRIES) {
-		const oldest = deepStateMemory.keys().next().value;
-		if (oldest == null) break;
-		deepStateMemory.delete(oldest);
-	}
-};
 
 const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) => {
 	const {serverUrl, accessToken, user} = useAuth();
@@ -80,7 +56,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	const backdropTimerRef = useRef(null);
 	const gridScrollToRef = useRef(null);
 	const focusMemoryKey = `${serverUrl || ''}|${user?.Id || 'user'}|${sectionId || ''}`;
-	const stateMemoryKey = section ? `${focusMemoryKey}|${sectionRevisionFor(section)}` : null;
+	const stateMemoryKey = section ? homeLabDiscoveryDeepStateKey({serverUrl, userId: user?.Id, section}) : null;
 
 	useEffect(() => {
 		if (!backHandlerRef) return;
@@ -131,7 +107,11 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		if (!section || !serverUrl || !accessToken || !stateMemoryKey) return null;
 		return new HomeLabDiscoveryDeepController({
 			section,
-			initialState: readDeepState(stateMemoryKey),
+			initialState: readHomeLabDiscoveryDeepState(stateMemoryKey),
+			// A personalised logical page already has its own bounded upstream
+			// recommendation budget. Do not multiply that budget with automatic
+			// empty-page read-ahead; let the user explicitly continue a sparse row.
+			maxEmptyPageReadAhead: section.query?.source === 'personalised' ? 1 : 4,
 			loadPage: (current, {page, forceRefresh}) => loadHomeLabDiscoveryPage({
 				section: current,
 				page,
@@ -146,7 +126,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	const applyBrowseState = useCallback((state) => {
 		itemsRef.current = state.items;
 		setBrowseState(state);
-		if (controller && stateMemoryKey) rememberDeepState(stateMemoryKey, controller.snapshot());
+		if (controller && stateMemoryKey) rememberHomeLabDiscoveryDeepState(stateMemoryKey, controller.snapshot());
 	}, [controller, stateMemoryKey]);
 
 	useEffect(() => {
@@ -333,6 +313,10 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 						<div className={css.deepEmpty}>
 							<div>{$L('No items found')}</div>
 							{browseState?.error && <SpottableButton className={css.retryButton} onClick={retry}>{$L('Try Again')}</SpottableButton>}
+							{!browseState?.error && browseState?.hasMore && !isLoadingMore && (
+								<SpottableButton className={css.retryButton} onClick={loadMore}>{$L('Load More')}</SpottableButton>
+							)}
+							{isLoadingMore && <div className={css.deepLoadingMore}>{$L('Loading more...')}</div>}
 						</div>
 					) : (
 						<>
