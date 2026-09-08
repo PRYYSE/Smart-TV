@@ -1,40 +1,83 @@
 const PAGE_SIZE = 15;
-const PERSONAL_DETAIL_FIELDS = 'ProviderIds,Overview,Genres,CommunityRating,Tags,People,Studios,ProductionLocations,OriginalLanguage';
-const DIRECT_SLOTS = Object.freeze({
-	'recent-history': 1,
-	'favourites': 2,
-	'watchlist': 3,
-	'high-ratings': 4,
-	'likes': 5,
-	'mixed-positive': 6,
-	'highly-rated-unseen': 7,
-	'novelty': 8,
-	'movie-affinity': 9,
-	'series-affinity': 10,
-	'anime-affinity': 11,
-	'short-runtime-affinity': 12,
-	'older-affinity': 13,
-	'recent-affinity': 14,
-	'rewatch': 15,
-	'recent-discovery-context': 16
+const SEED_LIMIT = 60;
+const PERSONAL_DETAIL_FIELDS = 'ProviderIds,Overview,Genres,CommunityRating,Tags,People,Studios,ProductionLocations,OriginalLanguage,RunTimeTicks,ProductionYear,UserData,SeriesId';
+
+const BASE_POLICIES = Object.freeze({
+	'recent-history': {source: 'history', slot: 1},
+	'favourites': {source: 'favourites', slot: 2},
+	'watchlist': {source: 'watchlist', slot: 3},
+	'high-ratings': {source: 'high-ratings', slot: 4},
+	'likes': {source: 'likes', slot: 5},
+	'mixed-positive': {source: 'positive', slot: 6},
+	'highly-rated-unseen': {source: 'positive', slot: 7, minRating: 7, unseenOnly: true},
+	'novelty': {source: 'random', slot: 8},
+	'movie-affinity': {source: 'history', slot: 9, forceMediaType: 'movie'},
+	'series-affinity': {source: 'history', slot: 10, forceMediaType: 'tv'},
+	'anime-affinity': {source: 'history', slot: 11, animeOnly: true},
+	'short-runtime-affinity': {source: 'history', slot: 12, maxRuntimeMinutes: 60},
+	'older-affinity': {source: 'history', slot: 13, maxYearOffset: 10},
+	'recent-affinity': {source: 'history', slot: 14, minYearOffset: 5},
+	'rewatch': {source: 'positive', slot: 15, direct: true, playedOnly: true},
+	'recently-added': {source: 'recently-added', slot: 16, direct: true},
+	'trending-anime': {source: 'trending', slot: 1, direct: true, animeOnly: true},
+	'anime-popular-but-not-in-your-library': {source: 'popular-anime', slot: 2, direct: true, animeOnly: true, excludeLibrary: true}
 });
 
-// Keep the feature's testable recommendation policy independent from the
-// platform/runtime modules. Enact's Jest runtime cannot parse one of the ESM
-// Babel helpers pulled in by jellyfinApi at module-evaluation time, and the
-// policy itself does not need that runtime until a real recommendation is
-// requested. These adapters resolve the authoritative runtime services lazily
-// while dependency-injected tests remain completely platform-neutral.
+const ALIASES = Object.freeze({
+	'something-completely-different': ['novelty'],
+	'comfort-rewatch-candidates': ['rewatch'],
+	'anime-recent-history': ['recent-history', {animeOnly: true}],
+	'anime-favourites': ['favourites', {animeOnly: true}],
+	'anime-watchlist': ['watchlist', {animeOnly: true}],
+	'anime-action-affinity': ['anime-affinity', {seedGenres: ['action']}],
+	'anime-fantasy-affinity': ['anime-affinity', {seedGenres: ['fantasy']}],
+	'anime-romance-drama-affinity': ['anime-affinity', {seedGenres: ['romance', 'drama']}],
+	'anime-novelty': ['novelty', {animeOnly: true}],
+	'anime-something-different': ['novelty', {animeOnly: true}],
+	'anime-highly-rated-unseen': ['highly-rated-unseen', {animeOnly: true}],
+	'anime-high-ratings': ['high-ratings', {animeOnly: true}],
+	'anime-recent-affinity': ['recent-affinity', {animeOnly: true}],
+	'anime-older-affinity': ['older-affinity', {animeOnly: true}],
+	'anime-movie-affinity': ['movie-affinity', {animeOnly: true}],
+	'anime-short-affinity': ['short-runtime-affinity', {animeOnly: true}]
+});
+
+// These are deliberately unsupported until their catalogue labels can be
+// backed by real data. In particular, season-count/status/binge semantics must
+// never fall through to an arbitrary recommendation seed just to keep a lane.
+export const HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES = Object.freeze([
+	'recent-discovery-context',
+	'limited-series',
+	'one-season-wonders',
+	'long-running-favourites',
+	'weekend-binge',
+	'anime-specials',
+	'anime-one-season',
+	'anime-long-running',
+	'anime-bingeable',
+	'anime-completed',
+	'anime-continuing',
+	'anime-short-runs'
+]);
+
 const runtimeApi = {
 	getItems: (...args) => {
 		const {api} = require('./jellyfinApi');
 		return api.getItems(...args);
+	},
+	resolveItemsByProviderIds: (...args) => {
+		const {resolveItemsByProviderIds} = require('./jellyfinApi');
+		return resolveItemsByProviderIds(...args);
 	}
 };
 
-const runtimeRowsLoader = (...args) => {
-	const {loadSinceYouWatchedRows} = require('./homeRecommendations');
-	return loadSinceYouWatchedRows(...args);
+const runtimeSeerr = {
+	getWatchlist: (...args) => require('./seerrApi').getWatchlist(...args),
+	getMovieRecommendations: (...args) => require('./seerrApi').getMovieRecommendations(...args),
+	getTvRecommendations: (...args) => require('./seerrApi').getTvRecommendations(...args),
+	getRecentlyAdded: (...args) => require('./seerrApi').getRecentlyAdded(...args),
+	trending: (...args) => require('./seerrApi').trending(...args),
+	discoverTv: (...args) => require('./seerrApi').discoverTv(...args)
 };
 
 const runtimeIdentity = () => {
@@ -50,59 +93,140 @@ const normalisedList = (value) => (
 
 const positiveTmdbId = (item) => {
 	const providerIds = item?.ProviderIds || {};
-	const raw = providerIds.Tmdb ?? providerIds.TMDB ?? providerIds.tmdb;
+	const raw = providerIds.Tmdb ?? providerIds.TMDB ?? providerIds.tmdb ?? item?.tmdbId ?? item?._seerrRaw?.mediaId;
 	const id = Number(raw);
 	return Number.isInteger(id) && id > 0 ? id : null;
 };
 
 const mediaTypeFor = (item) => {
-	if (item?.Type === 'Movie') return 'movie';
-	if (item?.Type === 'Series') return 'tv';
+	const type = item?.Type || item?.type || item?._seerrMediaType || item?.mediaType || item?.media_type;
+	if (type === 'Movie' || type === 'movie') return 'movie';
+	if (type === 'Series' || type === 'series' || type === 'tv' || type === 'show') return 'tv';
 	return null;
 };
 
-export const homeLabDiscoveryPersonalSlot = (section) => {
-	const strategy = String(section?.query?.seedStrategy || '').trim().toLowerCase();
-	if (DIRECT_SLOTS[strategy]) return DIRECT_SLOTS[strategy];
-	const input = `${section?.id || ''}|${strategy}`;
-	let hash = 0;
-	for (let index = 0; index < input.length; index += 1) {
-		hash = ((hash * 31) + input.charCodeAt(index)) & 0x7fffffff;
-	}
-	return (hash % 16) + 1;
+const yearFor = (item) => {
+	const direct = Number(item?.ProductionYear);
+	if (Number.isInteger(direct) && direct > 1800) return direct;
+	const date = item?.release_date || item?.releaseDate || item?.first_air_date || item?.firstAirDate;
+	const parsed = typeof date === 'string' ? Number(date.slice(0, 4)) : NaN;
+	return Number.isInteger(parsed) ? parsed : null;
 };
 
-export const isHomeLabDiscoveryAnimeItem = (item) => {
-	const tags = normalisedList(item?.Tags);
-	if (tags.includes('anime')) return true;
-	const genres = normalisedList(item?.Genres);
-	if (genres.includes('anime')) return true;
-	if (!genres.includes('animation')) return false;
-	const language = String(item?.OriginalLanguage || '').trim().toLowerCase();
-	const locations = normalisedList(item?.ProductionLocations);
-	return language === 'ja' || language === 'jpn' || language === 'japanese' || locations.includes('japan');
+const runtimeMinutesFor = (item) => {
+	const ticks = Number(item?.RunTimeTicks);
+	return Number.isFinite(ticks) && ticks > 0 ? ticks / 600000000 : null;
 };
 
 const sectionRequiresAnime = (section) => {
 	const tags = normalisedList(section?.tags);
 	const strategy = String(section?.query?.seedStrategy || '').trim().toLowerCase();
-	return tags.includes('anime') || strategy.startsWith('anime') || String(section?.id || '').toLowerCase().startsWith('anime');
+	return tags.includes('anime') || strategy.startsWith('anime-') || String(section?.id || '').toLowerCase().startsWith('anime');
 };
 
-const matchesSection = (section, item) => {
-	const mediaType = mediaTypeFor(item);
-	if (!mediaType) return false;
-	const requestedType = section?.query?.mediaType;
-	if (requestedType && mediaType !== requestedType) return false;
-	if (sectionRequiresAnime(section) && !isHomeLabDiscoveryAnimeItem(item)) return false;
-	return true;
+export const isHomeLabDiscoveryAnimeItem = (item) => {
+	const tags = normalisedList(item?.Tags || item?.tags);
+	if (tags.includes('anime')) return true;
+	const genres = normalisedList(item?.Genres || item?.genres);
+	if (genres.includes('anime')) return true;
+	const genreIds = item?.GenreIds || item?.genreIds || item?.genre_ids || [];
+	const animation = Array.isArray(genreIds) && genreIds.some(value => Number(value) === 16);
+	const language = String(item?.OriginalLanguage || item?.originalLanguage || item?.original_language || '').trim().toLowerCase();
+	const locations = normalisedList(item?.ProductionLocations);
+	if (animation && (language === 'ja' || language === 'jpn' || language === 'japanese')) return true;
+	if (!genres.includes('animation')) return false;
+	return language === 'ja' || language === 'jpn' || language === 'japanese' || locations.includes('japan');
 };
+
+const resolvePolicy = (strategy) => {
+	const key = String(strategy || '').trim().toLowerCase();
+	if (BASE_POLICIES[key]) return {...BASE_POLICIES[key], strategy: key};
+	const alias = ALIASES[key];
+	if (!alias) return null;
+	const [base, overrides = {}] = alias;
+	const basePolicy = BASE_POLICIES[base];
+	if (!basePolicy) return null;
+	return {...basePolicy, ...overrides, strategy: key};
+};
+
+export const homeLabDiscoveryPersonalPolicy = (section) => {
+	const policy = resolvePolicy(section?.query?.seedStrategy);
+	if (!policy) return null;
+	return {
+		...policy,
+		mediaType: policy.forceMediaType || section?.query?.mediaType || null,
+		animeOnly: policy.animeOnly === true || sectionRequiresAnime(section)
+	};
+};
+
+export const homeLabDiscoveryPersonalSlot = (section) => homeLabDiscoveryPersonalPolicy(section)?.slot ?? null;
+
+const uniqueByIdentity = (items) => {
+	const output = [];
+	const seen = new Set();
+	for (const item of items || []) {
+		const tmdb = positiveTmdbId(item);
+		const mediaType = mediaTypeFor(item);
+		const fallback = item?.Id || item?.id;
+		const key = tmdb && mediaType ? `${mediaType}:tmdb:${tmdb}` : (fallback ? `${mediaType || 'unknown'}:id:${fallback}` : null);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		output.push(item);
+	}
+	return output;
+};
+
+const candidateFromSeerr = (item) => {
+	const id = Number(item?.id ?? item?.tmdbId);
+	if (!Number.isInteger(id) || id <= 0) return null;
+	const mediaType = mediaTypeFor(item) || (item?.title ? 'movie' : 'tv');
+	if (mediaType !== 'movie' && mediaType !== 'tv') return null;
+	const date = item?.release_date || item?.releaseDate || item?.first_air_date || item?.firstAirDate || null;
+	return {
+		Id: `seerr-${mediaType}-${id}`,
+		Type: mediaType === 'movie' ? 'Movie' : 'Series',
+		Name: item?.title || item?.name || `TMDB ${id}`,
+		Overview: item?.overview || null,
+		ProviderIds: {Tmdb: String(id)},
+		ProductionYear: yearFor(item),
+		CommunityRating: Number(item?.vote_average ?? item?.voteAverage ?? 0) || null,
+		GenreIds: item?.genre_ids || item?.genreIds || [],
+		OriginalLanguage: item?.original_language || item?.originalLanguage || null,
+		Adult: item?.adult === true,
+		mediaInfo: item?.mediaInfo || item?.media || null,
+		_externalPosterPath: item?.poster_path || item?.posterPath || null,
+		_externalBackdropPath: item?.backdrop_path || item?.backdropPath || null,
+		_externalReleaseDate: date,
+		_seerr: true,
+		_seerrMediaType: mediaType
+	};
+};
+
+const candidateFromMediaRecord = (item) => candidateFromSeerr({
+	id: item?.tmdbId ?? item?.id,
+	mediaType: item?.mediaType || item?.media_type || item?.type,
+	title: item?.title,
+	name: item?.name,
+	overview: item?.overview,
+	posterPath: item?.posterPath,
+	backdropPath: item?.backdropPath,
+	voteAverage: item?.voteAverage,
+	mediaInfo: item?.mediaInfo || (item?.status != null ? {status: item.status} : null),
+	releaseDate: item?.releaseDate,
+	firstAirDate: item?.firstAirDate,
+	genreIds: item?.genreIds,
+	originalLanguage: item?.originalLanguage
+});
 
 const toDiscoveryItem = (item) => {
 	const tmdbId = positiveTmdbId(item);
 	const mediaType = mediaTypeFor(item);
 	if (!tmdbId || !mediaType) return null;
 	const rating = Number(item?.CommunityRating);
+	const rawStatus = Number(item?.mediaInfo?.status ?? item?.MediaInfo?.Status ?? 0);
+	const isResolvedLocal = item?._resolvedFromExternal === true || (item?._seerr !== true && !String(item?.Id || '').startsWith('seerr-'));
+	const status = rawStatus > 0 ? rawStatus : (isResolvedLocal ? 5 : null);
+	const date = item?._externalReleaseDate || (yearFor(item) ? `${yearFor(item)}-01-01` : null);
 	return {
 		id: tmdbId,
 		mediaType,
@@ -110,52 +234,85 @@ const toDiscoveryItem = (item) => {
 		name: mediaType === 'tv' ? (item?.Name || null) : null,
 		originalTitle: item?.OriginalTitle || null,
 		overview: item?.Overview || null,
-		posterPath: null,
-		backdropPath: null,
-		voteAverage: Number.isFinite(rating) ? rating : null,
-		isAdult: false,
-		mediaInfo: {
-			status: 5,
-			jellyfinMediaId: item?.Id || null
+		posterPath: item?._externalPosterPath || null,
+		backdropPath: item?._externalBackdropPath || null,
+		releaseDate: mediaType === 'movie' ? date : null,
+		firstAirDate: mediaType === 'tv' ? date : null,
+		voteAverage: Number.isFinite(rating) && rating > 0 ? rating : null,
+		isAdult: item?.Adult === true,
+		mediaInfo: status == null ? null : {
+			status,
+			jellyfinMediaId: isResolvedLocal ? (item?.Id || null) : null
 		}
 	};
 };
 
-const sourceTypeFor = (section) => {
-	if (section?.query?.mediaType === 'tv') return 'shows';
-	if (section?.query?.mediaType === 'movie') return 'movies';
-	return 'both';
+const matchesMediaType = (item, wanted) => !wanted || mediaTypeFor(item) === wanted;
+
+const matchesPolicy = (item, policy, now = new Date()) => {
+	if (!matchesMediaType(item, policy.mediaType)) return false;
+	if (policy.animeOnly && !isHomeLabDiscoveryAnimeItem(item)) return false;
+	if (Array.isArray(policy.seedGenres) && policy.seedGenres.length) {
+		const genres = normalisedList(item?.Genres || item?.genres);
+		if (!policy.seedGenres.some(genre => genres.some(value => value.includes(genre)))) return false;
+	}
+	const runtime = runtimeMinutesFor(item);
+	if (policy.maxRuntimeMinutes && runtime != null && runtime > policy.maxRuntimeMinutes) return false;
+	const year = yearFor(item);
+	const currentYear = now.getFullYear();
+	if (policy.maxYearOffset && year != null && year > currentYear - policy.maxYearOffset) return false;
+	if (policy.minYearOffset && year != null && year < currentYear - policy.minYearOffset) return false;
+	return true;
 };
 
-const settingsFor = (section) => ({
-	sinceYouWatchedSource: 'local',
-	sinceYouWatchedSourceItem: 'recentlyWatched',
-	sinceYouWatchedSourceType: sourceTypeFor(section),
-	sinceYouWatchedIncludeWatched: String(section?.query?.seedStrategy || '').toLowerCase() === 'rewatch'
-});
+const matchesResultPolicy = (item, policy) => {
+	if (!matchesMediaType(item, policy.mediaType)) return false;
+	if (policy.animeOnly && !isHomeLabDiscoveryAnimeItem(item)) return false;
+	if (policy.unseenOnly && item?.UserData?.Played === true) return false;
+	if (policy.playedOnly && item?.UserData?.Played !== true) return false;
+	if (policy.excludeLibrary && (item?._resolvedFromExternal === true || item?._seerr !== true)) return false;
+	if (policy.minRating) {
+		const rating = Number(item?.CommunityRating);
+		if (!Number.isFinite(rating) || rating < policy.minRating) return false;
+	}
+	return true;
+};
+
+const itemTypesFor = (policy, history = false) => {
+	if (policy.mediaType === 'movie') return 'Movie';
+	if (policy.mediaType === 'tv') return history ? 'Episode' : 'Series';
+	return history ? 'Movie,Episode' : 'Movie,Series';
+};
 
 export class HomeLabDiscoveryPersonalisation {
 	constructor({
 		api = runtimeApi,
-		rowsLoader = runtimeRowsLoader,
+		seerr = runtimeSeerr,
 		identity = runtimeIdentity,
-		pageSize = PAGE_SIZE
+		pageSize = PAGE_SIZE,
+		now = () => new Date()
 	} = {}) {
 		this.api = api;
-		this.rowsLoader = rowsLoader;
+		this.seerr = seerr;
 		this.identity = identity;
 		this.pageSize = Math.max(1, Number(pageSize) || PAGE_SIZE);
+		this.now = now;
 		this.cache = new Map();
 	}
 
+	supports(section) {
+		return Boolean(homeLabDiscoveryPersonalPolicy(section));
+	}
+
 	async load(section, {page = 1, forceRefresh = false} = {}) {
+		const policy = homeLabDiscoveryPersonalPolicy(section);
+		if (!policy) throw new Error(`Unsupported personalised Discovery strategy: ${section?.query?.seedStrategy || 'unknown'}`);
 		const safePage = Math.max(1, Number(page) || 1);
-		const strategy = String(section?.query?.seedStrategy || 'personalised');
-		const cacheKey = `${this.identity()}|${section?.id || 'section'}|${strategy}|${section?.query?.mediaType || 'any'}`;
+		const cacheKey = `${this.identity()}|${section?.id || 'section'}|${policy.strategy}|${policy.mediaType || 'any'}`;
 		if (forceRefresh) this.cache.delete(cacheKey);
 		let cached = this.cache.get(cacheKey);
 		if (!cached) {
-			cached = this._loadRow(section);
+			cached = this._loadRow(section, policy);
 			this.cache.set(cacheKey, cached);
 		}
 		let row;
@@ -166,14 +323,14 @@ export class HomeLabDiscoveryPersonalisation {
 			throw error;
 		}
 		const totalResults = row.items.length;
-		const totalPages = Math.max(1, Math.ceil(totalResults / this.pageSize));
+		const totalPages = totalResults === 0 ? 0 : Math.ceil(totalResults / this.pageSize);
 		const start = (safePage - 1) * this.pageSize;
 		return {
 			page: safePage,
 			totalPages,
 			totalResults,
 			displayTitle: row.displayTitle,
-			results: safePage <= totalPages ? row.items.slice(start, start + this.pageSize) : []
+			results: start < totalResults ? row.items.slice(start, start + this.pageSize) : []
 		};
 	}
 
@@ -181,45 +338,175 @@ export class HomeLabDiscoveryPersonalisation {
 		this.cache.clear();
 	}
 
-	async _loadRow(section) {
-		const slot = homeLabDiscoveryPersonalSlot(section);
-		const rows = await this.rowsLoader(this.api, settingsFor(section), [slot], false);
-		const row = Array.isArray(rows) ? rows[0] : null;
-		const hydrated = await this._hydrateItems(row?.items || []);
-		const items = [];
-		const seen = new Set();
-		for (const candidate of hydrated) {
-			if (!matchesSection(section, candidate)) continue;
-			const item = toDiscoveryItem(candidate);
-			if (!item) continue;
-			const key = `${item.mediaType}:${item.id}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			items.push(item);
+	async _loadRow(section, policy) {
+		if (policy.direct) return this._loadDirectRow(section, policy);
+		const seeds = await this._loadSeeds(policy);
+		if (!seeds.length) return {displayTitle: section?.title || 'For You', items: []};
+		const start = (Math.max(1, Number(policy.slot) || 1) - 1) % seeds.length;
+		const aggregated = [];
+		let chosenSeed = null;
+		for (let attempt = 0; attempt < Math.min(4, seeds.length) && aggregated.length < this.pageSize; attempt += 1) {
+			const seed = seeds[(start + attempt) % seeds.length];
+			const tmdbId = positiveTmdbId(seed);
+			const mediaType = mediaTypeFor(seed);
+			if (!tmdbId || !mediaType) continue;
+			let payload;
+			if (mediaType === 'movie' && typeof this.seerr?.getMovieRecommendations === 'function') {
+				payload = await this.seerr.getMovieRecommendations(tmdbId, 1);
+			} else if (mediaType === 'tv' && typeof this.seerr?.getTvRecommendations === 'function') {
+				payload = await this.seerr.getTvRecommendations(tmdbId, 1);
+			} else {
+				continue;
+			}
+			const candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+			const resolved = await this._resolveOwned(candidates);
+			for (const item of resolved) {
+				if (!matchesResultPolicy(item, policy)) continue;
+				aggregated.push(item);
+			}
+			if (!chosenSeed && aggregated.length) chosenSeed = seed;
 		}
-		const seedName = String(row?.seedName || '').trim();
+		const items = this._convert(uniqueByIdentity(aggregated), section, policy);
 		return {
-			displayTitle: seedName ? `Because You Watched ${seedName}` : (section?.title || 'For You'),
+			displayTitle: this._displayTitle(section, policy, chosenSeed),
 			items
 		};
 	}
 
+	async _loadDirectRow(section, policy) {
+		let candidates = [];
+		if (policy.source === 'recently-added' && typeof this.seerr?.getRecentlyAdded === 'function') {
+			const payload = await this.seerr.getRecentlyAdded(80);
+			const source = Array.isArray(payload) ? payload : (payload?.results || []);
+			candidates = source.map(candidateFromMediaRecord).filter(Boolean);
+		} else if (policy.source === 'trending' && typeof this.seerr?.trending === 'function') {
+			const payload = await this.seerr.trending(1);
+			candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+		} else if (policy.source === 'popular-anime' && typeof this.seerr?.discoverTv === 'function') {
+			const payload = await this.seerr.discoverTv(1);
+			candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+		} else {
+			candidates = await this._loadSeeds(policy);
+		}
+		const hydrated = await this._hydrateItems(candidates);
+		const resolved = await this._resolveOwned(hydrated);
+		const filtered = resolved.filter(item => matchesResultPolicy(item, policy));
+		return {
+			displayTitle: section?.title || 'For You',
+			items: this._convert(uniqueByIdentity(filtered), section, policy)
+		};
+	}
+
+	async _loadSeeds(policy) {
+		let seeds;
+		if (policy.source === 'positive') {
+			const [likes, favourites, history] = await Promise.all([
+				this._loadJellyfinSeeds('likes', policy),
+				this._loadJellyfinSeeds('favourites', policy),
+				this._loadJellyfinSeeds('history', policy)
+			]);
+			seeds = uniqueByIdentity([...likes, ...favourites, ...history]);
+		} else if (policy.source === 'high-ratings') {
+			const [likes, favourites] = await Promise.all([
+				this._loadJellyfinSeeds('likes', policy),
+				this._loadJellyfinSeeds('favourites', policy)
+			]);
+			seeds = uniqueByIdentity([...likes, ...favourites]);
+		} else if (policy.source === 'watchlist') {
+			seeds = await this._loadWatchlistSeeds();
+		} else {
+			seeds = await this._loadJellyfinSeeds(policy.source, policy);
+		}
+		const now = this.now();
+		return uniqueByIdentity(seeds).filter(item => matchesPolicy(item, policy, now));
+	}
+
+	async _loadJellyfinSeeds(source, policy) {
+		if (typeof this.api?.getItems !== 'function') return [];
+		const history = source === 'history';
+		const params = {
+			Recursive: true,
+			IncludeItemTypes: itemTypesFor(policy, history),
+			Limit: SEED_LIMIT,
+			Fields: PERSONAL_DETAIL_FIELDS
+		};
+		if (source === 'history') {
+			params.SortBy = 'DatePlayed';
+			params.SortOrder = 'Descending';
+			params.Filters = 'IsPlayed';
+		} else if (source === 'favourites') {
+			params.SortBy = 'DatePlayed';
+			params.SortOrder = 'Descending';
+			params.Filters = 'IsFavorite';
+		} else if (source === 'likes') {
+			params.SortBy = 'DatePlayed';
+			params.SortOrder = 'Descending';
+			params.Filters = 'Likes';
+		} else if (source === 'random') {
+			params.SortBy = 'Random';
+		} else {
+			return [];
+		}
+		try {
+			const response = await this.api.getItems(params);
+			const items = response?.Items || [];
+			return history ? await this._resolveHistoryEpisodes(items) : items;
+		} catch (_error) {
+			return [];
+		}
+	}
+
+	async _resolveHistoryEpisodes(items) {
+		const source = Array.isArray(items) ? items : [];
+		const seriesIds = [];
+		for (const item of source) {
+			if (item?.Type === 'Episode' && item?.SeriesId && !seriesIds.includes(String(item.SeriesId))) seriesIds.push(String(item.SeriesId));
+		}
+		if (!seriesIds.length || typeof this.api?.getItems !== 'function') return source.filter(item => item?.Type !== 'Episode');
+		let series = [];
+		try {
+			const response = await this.api.getItems({Ids: seriesIds.join(','), Fields: PERSONAL_DETAIL_FIELDS, Limit: seriesIds.length});
+			series = response?.Items || [];
+		} catch (_error) {
+			series = [];
+		}
+		const byId = new Map(series.filter(item => item?.Id).map(item => [String(item.Id), item]));
+		const output = [];
+		const seenSeries = new Set();
+		for (const item of source) {
+			if (item?.Type !== 'Episode') {
+				output.push(item);
+				continue;
+			}
+			const seriesId = String(item?.SeriesId || '');
+			if (!seriesId || seenSeries.has(seriesId)) continue;
+			const resolved = byId.get(seriesId);
+			if (resolved) {
+				seenSeries.add(seriesId);
+				output.push(resolved);
+			}
+		}
+		return output;
+	}
+
+	async _loadWatchlistSeeds() {
+		if (typeof this.seerr?.getWatchlist !== 'function') return [];
+		try {
+			const payload = await this.seerr.getWatchlist(1);
+			return (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+		} catch (_error) {
+			return [];
+		}
+	}
+
 	async _hydrateItems(items) {
 		const source = Array.isArray(items) ? items : [];
-		const ids = source
-			.filter(item => item?.Id && !positiveTmdbId(item))
-			.map(item => String(item.Id));
+		const ids = source.filter(item => item?.Id && !positiveTmdbId(item)).map(item => String(item.Id));
 		if (!ids.length || typeof this.api?.getItems !== 'function') return source;
 		try {
-			const response = await this.api.getItems({
-				Ids: ids.join(','),
-				Fields: PERSONAL_DETAIL_FIELDS,
-				Limit: ids.length
-			});
+			const response = await this.api.getItems({Ids: ids.join(','), Fields: PERSONAL_DETAIL_FIELDS, Limit: ids.length});
 			const detailed = new Map();
-			for (const item of response?.Items || []) {
-				if (item?.Id) detailed.set(String(item.Id), item);
-			}
+			for (const item of response?.Items || []) if (item?.Id) detailed.set(String(item.Id), item);
 			return source.map(item => {
 				const detail = item?.Id ? detailed.get(String(item.Id)) : null;
 				return detail ? {...item, ...detail} : item;
@@ -227,6 +514,41 @@ export class HomeLabDiscoveryPersonalisation {
 		} catch (_error) {
 			return source;
 		}
+	}
+
+	async _resolveOwned(items) {
+		if (typeof this.api?.resolveItemsByProviderIds !== 'function') return items;
+		try {
+			return await this.api.resolveItemsByProviderIds(items);
+		} catch (_error) {
+			return items;
+		}
+	}
+
+	_convert(items, section, policy) {
+		const results = [];
+		const seen = new Set();
+		for (const candidate of items || []) {
+			if (!matchesResultPolicy(candidate, policy)) continue;
+			const item = toDiscoveryItem(candidate);
+			if (!item) continue;
+			const key = `${item.mediaType}:${item.id}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			results.push(item);
+		}
+		return results;
+	}
+
+	_displayTitle(section, policy, seed) {
+		const name = String(seed?.Name || '').trim();
+		if (!name) return section?.title || 'For You';
+		if (policy.source === 'favourites') return `More Like Favourite ${name}`;
+		if (policy.source === 'watchlist') return 'Recommended from Your Watchlist';
+		if (policy.source === 'likes' || policy.source === 'high-ratings') return `Because You Liked ${name}`;
+		if (policy.source === 'positive') return section?.title || 'Recommended For You';
+		if (policy.source === 'random') return section?.title || 'Something Different';
+		return `Because You Watched ${name}`;
 	}
 }
 
