@@ -1,4 +1,9 @@
-import {seerrTargetFor, seerrDetailStub, isSeerrOnlyItem} from './seerrTarget';
+import {
+	isSeerrOnlyItem,
+	seerrDetailStub,
+	seerrSelectionMediaId,
+	seerrTargetFor
+} from './seerrTarget';
 
 const movie = (providerIds) => ({Type: 'Movie', ProviderIds: providerIds});
 
@@ -25,6 +30,35 @@ describe('seerrTargetFor', () => {
 		expect(seerrTargetFor(movie({Tmdb: ''}))).toEqual(idle);
 		expect(seerrTargetFor(movie({Tmdb: 'not-a-number'}))).toEqual(idle);
 		expect(seerrTargetFor(movie(undefined))).toEqual(idle);
+	});
+});
+
+describe('Discovery detail selection', () => {
+	it('keeps a requestable-only title on the existing Seerr detail path', () => {
+		const mediaId = seerrSelectionMediaId({tmdbId: 603});
+		const stub = seerrDetailStub({mediaId, mediaType: 'movie'});
+		expect(isSeerrOnlyItem(stub)).toBe(true);
+		expect(seerrTargetFor(stub)).toEqual({mediaId: 603, mediaType: 'movie'});
+	});
+
+	it('opens an owned Discovery movie as the real Jellyfin item', () => {
+		const mediaId = seerrSelectionMediaId({tmdbId: 603, jellyfinMediaId: 'jf-movie-1'});
+		const pointer = seerrDetailStub({mediaId, mediaType: 'movie'});
+		expect(pointer).toEqual({Id: 'jf-movie-1', Type: 'Movie'});
+		expect(isSeerrOnlyItem(pointer)).toBe(false);
+	});
+
+	it('opens an owned Discovery series as the real Jellyfin item', () => {
+		const mediaId = seerrSelectionMediaId({tmdbId: 1399, jellyfinMediaId: 'jf-series-1'});
+		const pointer = seerrDetailStub({mediaId, mediaType: 'tv'});
+		expect(pointer).toEqual({Id: 'jf-series-1', Type: 'Series'});
+		expect(isSeerrOnlyItem(pointer)).toBe(false);
+	});
+
+	it('ignores blank local identities rather than creating a broken library pointer', () => {
+		const mediaId = seerrSelectionMediaId({tmdbId: 603, jellyfinMediaId: '   '});
+		expect(mediaId).toBe(603);
+		expect(isSeerrOnlyItem(seerrDetailStub({mediaId, mediaType: 'movie'}))).toBe(true);
 	});
 });
 

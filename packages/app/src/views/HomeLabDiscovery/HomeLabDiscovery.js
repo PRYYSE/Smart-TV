@@ -11,9 +11,14 @@ import {useSettings} from '../../context/SettingsContext';
 import {loadHomeLabDiscoveryCatalogue} from '../../services/homeLabDiscoveryCatalogue';
 import {loadHomeLabDiscoveryLane} from '../../services/homeLabDiscoveryLaneLoader';
 import {homeLabDiscoveryDeepTarget, homeLabDiscoveryLandingFocusTarget} from '../../services/homeLabDiscoveryRoute';
-import {HomeLabDiscoveryTabController} from '../../services/homeLabDiscoveryTabController';
+import {
+	HomeLabDiscoveryTabController,
+	homeLabDiscoveryTabResultState,
+	retainHomeLabDiscoveryRefreshFallback
+} from '../../services/homeLabDiscoveryTabController';
 import seerrApi from '../../services/seerrApi';
 import {KEYS} from '../../utils/keys';
+import {seerrSelectionMediaId} from '../../utils/seerrTarget';
 import LegacySeerrDiscover from '../SeerrDiscover/SeerrDiscover';
 
 import css from './HomeLabDiscovery.module.less';
@@ -67,8 +72,12 @@ const DiscoveryMediaCard = memo(function DiscoveryMediaCard({
 	const status = Number(item?.mediaInfo?.status || 0);
 
 	const handleSelect = useCallback(() => {
-		const mediaId = mediaIdFor(item);
-		if (mediaId == null) return;
+		const tmdbId = mediaIdFor(item);
+		if (tmdbId == null) return;
+		const mediaId = seerrSelectionMediaId({
+			tmdbId,
+			jellyfinMediaId: item?.mediaInfo?.jellyfinMediaId
+		});
 		onSelect?.({mediaId, mediaType});
 	}, [item, mediaType, onSelect]);
 
@@ -245,10 +254,19 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 		setLoadingByTab(previous => ({...previous, [tab.id]: true}));
 		try {
 			const result = refresh ? await controller.refresh() : await controller.load();
-			if (requestGenerationRef.current[tab.id] === generation) setTabResult(tab.id, result);
+			if (requestGenerationRef.current[tab.id] === generation) {
+				const presented = refresh
+					? retainHomeLabDiscoveryRefreshFallback(retainedLanding.tabResults[tab.id], result)
+					: result;
+				setTabResult(tab.id, presented);
+			}
 		} catch (error) {
 			if (requestGenerationRef.current[tab.id] === generation) {
-				setTabResult(tab.id, {selectedSections: [], lanes: [], usableLanes: [], hiddenLanes: [], failedLanes: [], error});
+				const failed = {selectedSections: [], lanes: [], usableLanes: [], hiddenLanes: [], failedLanes: [], error};
+				const presented = refresh
+					? retainHomeLabDiscoveryRefreshFallback(retainedLanding.tabResults[tab.id], failed)
+					: failed;
+				setTabResult(tab.id, presented);
 			}
 		} finally {
 			if (requestGenerationRef.current[tab.id] === generation) {
@@ -259,6 +277,7 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 
 	const activeTab = tabs[activeTabIndex] || tabs[0];
 	const activeResult = activeTab ? tabResults[activeTab.id] : null;
+	const activeResultState = homeLabDiscoveryTabResultState(activeResult);
 	const visibleLanes = useMemo(() => activeResult?.usableLanes || [], [activeResult]);
 	const activeLoading = activeTab ? !!loadingByTab[activeTab.id] : false;
 
@@ -269,10 +288,11 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 	}, [activeTab, activeTabIndex, loadTab, loadingByTab, tabResults]);
 
 	useEffect(() => {
-		if (!activeResult || !visibleLanes.length || activeLoading || !focusAfterLoadRef.current || !activeTab) return;
+		if (!activeResult || activeLoading || !focusAfterLoadRef.current || !activeTab) return;
 		const target = homeLabDiscoveryLandingFocusTarget({
 			memory: lastFocusByTab[activeTab.id],
-			lanes: visibleLanes
+			lanes: visibleLanes,
+			emptyTarget: 'homelab-discovery-empty-retry'
 		});
 		const timer = setTimeout(() => {
 			if (target) Spotlight.focus(target);
@@ -302,13 +322,16 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 	}, [activeTab]);
 
 	const focusActiveRow = useCallback(() => {
-		if (!visibleLanes.length || !activeTab) return;
+		if (!activeTab) return false;
 		const target = homeLabDiscoveryLandingFocusTarget({
 			memory: lastFocusByTab[activeTab.id],
-			lanes: visibleLanes
+			lanes: visibleLanes,
+			emptyTarget: activeResult && !activeLoading ? 'homelab-discovery-empty-retry' : null
 		});
-		if (target) Spotlight.focus(target);
-	}, [activeTab, visibleLanes]);
+		if (!target) return false;
+		Spotlight.focus(target);
+		return true;
+	}, [activeLoading, activeResult, activeTab, visibleLanes]);
 
 	const handleToolbarKeyDown = useCallback((event) => {
 		if (event.keyCode === KEYS.UP) {
@@ -316,9 +339,10 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 			event.stopPropagation();
 			Spotlight.focus('navbar');
 		} else if (event.keyCode === KEYS.DOWN) {
-			event.preventDefault();
-			event.stopPropagation();
-			focusActiveRow();
+			if (focusActiveRow()) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
 		} else if (event.keyCode === KEYS.LEFT) {
 			const first = event.currentTarget.querySelector('.spottable');
 			if (first && first.contains(document.activeElement)) {
@@ -340,10 +364,10 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 	}, [tabs]);
 
 	const handleRefresh = useCallback(() => {
-		if (!activeTab) return;
+		if (!activeTab || activeLoading) return;
 		focusAfterLoadRef.current = true;
 		loadTab(activeTabIndex, true);
-	}, [activeTab, activeTabIndex, loadTab]);
+	}, [activeLoading, activeTab, activeTabIndex, loadTab]);
 
 	const handleRowFocus = useCallback((rowIndex, detail = {}) => {
 		if (activeTab) lastFocusByTab[activeTab.id] = {rowIndex, ...detail};
@@ -434,7 +458,7 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 				</ToolbarContainer>
 
 				<div className={css.rowsContainer}>
-					{!activeResult && activeLoading ? (
+					{activeLoading && !visibleLanes.length ? (
 						<div className={css.loadingState}><LoadingSpinner /></div>
 					) : visibleLanes.length ? (
 						<>
@@ -451,14 +475,22 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 									onRowFocus={handleRowFocus}
 								/>
 							))}
-							{activeResult?.failedLanes?.length > 0 && (
+							{activeResult?.refreshFailure ? (
+								<div className={css.partialWarning}>{$L('Refresh failed. Showing previously loaded Discovery rows.')}</div>
+							) : activeResult?.failedLanes?.length > 0 ? (
 								<div className={css.partialWarning}>{$L('Some Discovery rows could not be loaded. Refresh to retry.')}</div>
-							)}
+							) : null}
 						</>
 					) : activeResult ? (
 						<div className={css.emptyState}>
-							<div>{activeResult.error ? $L('Discovery could not be loaded.') : $L('Nothing is available in this category right now.')}</div>
-							<SpottableButton className={css.retryButton} onClick={handleRefresh}>{$L('Try Again')}</SpottableButton>
+							<div>{activeResultState === 'failure' ? $L('Discovery could not be loaded.') : $L('Nothing is available in this category right now.')}</div>
+							<SpottableButton
+								className={css.retryButton}
+								onClick={handleRefresh}
+								spotlightId="homelab-discovery-empty-retry"
+							>
+								{$L('Try Again')}
+							</SpottableButton>
 						</div>
 					) : (
 						<div className={css.loadingState}><LoadingSpinner /></div>

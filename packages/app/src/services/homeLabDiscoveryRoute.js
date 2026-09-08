@@ -30,9 +30,9 @@ export const findHomeLabDiscoverySection = (catalogue, sectionId) => {
 	return null;
 };
 
-export const homeLabDiscoveryLandingFocusTarget = ({memory, lanes, fallbackRow = 0} = {}) => {
+export const homeLabDiscoveryLandingFocusTarget = ({memory, lanes, fallbackRow = 0, emptyTarget = null} = {}) => {
 	const visible = Array.isArray(lanes) ? lanes : [];
-	if (!visible.length) return null;
+	if (!visible.length) return emptyTarget;
 	const rememberedRow = Number(memory?.rowIndex);
 	const baseRow = Number.isInteger(rememberedRow) ? rememberedRow : Number(fallbackRow) || 0;
 	const rowIndex = Math.max(0, Math.min(baseRow, visible.length - 1));

@@ -45,5 +45,7 @@ describe('Home Lab Discovery route adapter', () => {
 		expect(homeLabDiscoveryLandingFocusTarget({lanes}))
 			.toBe('homelab-discovery-row-0-item-0');
 		expect(homeLabDiscoveryLandingFocusTarget({lanes: []})).toBeNull();
+		expect(homeLabDiscoveryLandingFocusTarget({lanes: [], emptyTarget: 'homelab-discovery-empty-retry'}))
+			.toBe('homelab-discovery-empty-retry');
 	});
 });

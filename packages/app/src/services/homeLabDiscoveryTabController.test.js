@@ -1,7 +1,9 @@
 import {
 	HomeLabDiscoveryTabController,
 	createHomeLabDiscoverySession,
-	presentHomeLabDiscoveryLanes
+	homeLabDiscoveryTabResultState,
+	presentHomeLabDiscoveryLanes,
+	retainHomeLabDiscoveryRefreshFallback
 } from './homeLabDiscoveryTabController';
 import {
 	clearHomeLabDiscoveryDeepState,
@@ -42,6 +44,15 @@ const lane = (sectionValue, ids) => ({
 	error: null
 });
 
+const tabResult = ({usable = [], failed = [], hidden = [], error = null} = {}) => ({
+	selectedSections: [],
+	lanes: [...usable, ...failed, ...hidden],
+	usableLanes: usable,
+	failedLanes: failed,
+	hiddenLanes: hidden,
+	error
+});
+
 describe('Home Lab Discovery tab controller', () => {
 	beforeEach(() => clearHomeLabDiscoveryDeepState());
 
@@ -78,6 +89,36 @@ describe('Home Lab Discovery tab controller', () => {
 		expect(result.failedLanes[0].section.id).toBe('bad');
 		expect(result.usableLanes.map(entry => entry.section.id))
 			.toEqual(result.selectedSections.filter(entry => entry.id !== 'bad').map(entry => entry.id));
+	});
+
+	test('classifies all-lane failures as failures rather than empty content', () => {
+		const failed = {section: section('bad'), items: [], error: new Error('offline')};
+		expect(homeLabDiscoveryTabResultState(null)).toBe('idle');
+		expect(homeLabDiscoveryTabResultState(tabResult())).toBe('empty');
+		expect(homeLabDiscoveryTabResultState(tabResult({failed: [failed]}))).toBe('failure');
+		expect(homeLabDiscoveryTabResultState(tabResult({error: new Error('top-level')}))).toBe('failure');
+		expect(homeLabDiscoveryTabResultState(tabResult({usable: [lane(section('ok'), [1])]}))).toBe('ready');
+		expect(homeLabDiscoveryTabResultState(tabResult({usable: [lane(section('ok'), [1])], failed: [failed]}))).toBe('partial');
+	});
+
+	test('failed refresh keeps the last usable rows while exposing the refresh failure', () => {
+		const previousLane = lane(section('previous'), [1, 2]);
+		const previous = tabResult({usable: [previousLane]});
+		const failure = new Error('refresh offline');
+		const next = tabResult({failed: [{section: section('bad'), items: [], error: failure}]});
+		const retained = retainHomeLabDiscoveryRefreshFallback(previous, next);
+		expect(retained.usableLanes).toEqual([previousLane]);
+		expect(retained.refreshFailure).toBe(failure);
+		expect(homeLabDiscoveryTabResultState(retained)).toBe('ready');
+	});
+
+	test('successful or genuinely empty refresh replaces stale rows', () => {
+		const previous = tabResult({usable: [lane(section('previous'), [1])]});
+		const replacement = tabResult({usable: [lane(section('new'), [2])]});
+		const empty = tabResult();
+		expect(retainHomeLabDiscoveryRefreshFallback(previous, replacement)).toBe(replacement);
+		expect(retainHomeLabDiscoveryRefreshFallback(previous, empty)).toBe(empty);
+		expect(retainHomeLabDiscoveryRefreshFallback(null, tabResult({error: new Error('offline')})).error).toBeTruthy();
 	});
 
 	test('shared novelty is applied in selected catalogue order with minimum backfill', () => {

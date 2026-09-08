@@ -17,6 +17,7 @@ import {
 import {loadHomeLabDiscoveryPage} from '../../services/homeLabDiscoveryLaneLoader';
 import {findHomeLabDiscoverySection} from '../../services/homeLabDiscoveryRoute';
 import seerrApi from '../../services/seerrApi';
+import {seerrSelectionMediaId} from '../../utils/seerrTarget';
 
 import css from './HomeLabDiscovery.module.less';
 
@@ -170,6 +171,24 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		return () => clearTimeout(timer);
 	}, [browseState?.items?.length, focusMemoryKey]);
 
+	useEffect(() => {
+		if (isLoading || isLoadingMore || browseState?.items?.length) return;
+		const target = browseState?.error
+			? 'homelab-deep-retry'
+			: browseState?.hasMore
+				? 'homelab-deep-load-more'
+				: null;
+		if (!target) return;
+		const timer = setTimeout(() => Spotlight.focus(target), 100);
+		return () => clearTimeout(timer);
+	}, [browseState?.error, browseState?.hasMore, browseState?.items?.length, isLoading, isLoadingMore]);
+
+	useEffect(() => {
+		if (!sectionError || section || isLoading) return;
+		const timer = setTimeout(() => Spotlight.focus('homelab-deep-catalogue-retry'), 100);
+		return () => clearTimeout(timer);
+	}, [isLoading, section, sectionError]);
+
 	useEffect(() => () => {
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
 	}, []);
@@ -215,8 +234,12 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		const index = Number(event.currentTarget?.dataset?.index);
 		const item = itemsRef.current[index];
 		if (!item) return;
-		const mediaId = mediaIdFor(item);
-		if (mediaId == null) return;
+		const tmdbId = mediaIdFor(item);
+		if (tmdbId == null) return;
+		const mediaId = seerrSelectionMediaId({
+			tmdbId,
+			jellyfinMediaId: item?.mediaInfo?.jellyfinMediaId
+		});
 		onSelectItem?.({mediaId, mediaType: mediaTypeFor(item, section?.query?.mediaType)});
 	}, [onSelectItem, section?.query?.mediaType]);
 
@@ -274,7 +297,13 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 			<div className={css.deepPage}>
 				<div className={css.deepEmpty}>
 					<div>{$L('This Discovery list is unavailable.')}</div>
-					<SpottableButton className={css.retryButton} onClick={retryCatalogue}>{$L('Try Again')}</SpottableButton>
+					<SpottableButton
+						className={css.retryButton}
+						onClick={retryCatalogue}
+						spotlightId="homelab-deep-catalogue-retry"
+					>
+						{$L('Try Again')}
+					</SpottableButton>
 					<div className={css.deepErrorHint}>{$L('Press Back to return to Discovery.')}</div>
 				</div>
 			</div>
@@ -311,10 +340,24 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 						<div className={css.loadingState}><LoadingSpinner /></div>
 					) : !items.length ? (
 						<div className={css.deepEmpty}>
-							<div>{$L('No items found')}</div>
-							{browseState?.error && <SpottableButton className={css.retryButton} onClick={retry}>{$L('Try Again')}</SpottableButton>}
+							<div>{browseState?.error ? $L('This Discovery list could not be loaded.') : $L('No items found')}</div>
+							{browseState?.error && (
+								<SpottableButton
+									className={css.retryButton}
+									onClick={retry}
+									spotlightId="homelab-deep-retry"
+								>
+									{$L('Try Again')}
+								</SpottableButton>
+							)}
 							{!browseState?.error && browseState?.hasMore && !isLoadingMore && (
-								<SpottableButton className={css.retryButton} onClick={loadMore}>{$L('Load More')}</SpottableButton>
+								<SpottableButton
+									className={css.retryButton}
+									onClick={loadMore}
+									spotlightId="homelab-deep-load-more"
+								>
+									{$L('Load More')}
+								</SpottableButton>
 							)}
 							{isLoadingMore && <div className={css.deepLoadingMore}>{$L('Loading more...')}</div>}
 						</div>
@@ -335,7 +378,13 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 							{browseState?.error && (
 								<div className={css.deepRetryOverlay}>
 									<span>{$L('More items could not be loaded.')}</span>
-									<SpottableButton className={css.retryButton} onClick={retry}>{$L('Retry')}</SpottableButton>
+									<SpottableButton
+										className={css.retryButton}
+										onClick={retry}
+										spotlightId="homelab-deep-more-retry"
+									>
+										{$L('Retry')}
+									</SpottableButton>
 								</div>
 							)}
 						</>

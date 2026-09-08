@@ -14,6 +14,22 @@ const identityFor = (section, item) => {
 	return id == null ? null : `${mediaType}:${id}`;
 };
 
+export const homeLabDiscoveryTabResultState = (result) => {
+	if (!result) return 'idle';
+	const usableCount = Array.isArray(result.usableLanes) ? result.usableLanes.length : 0;
+	const failedCount = Array.isArray(result.failedLanes) ? result.failedLanes.length : 0;
+	if (usableCount > 0) return failedCount > 0 ? 'partial' : 'ready';
+	if (result.error || failedCount > 0) return 'failure';
+	return 'empty';
+};
+
+export const retainHomeLabDiscoveryRefreshFallback = (previous, next) => {
+	if (homeLabDiscoveryTabResultState(next) !== 'failure') return next;
+	if (homeLabDiscoveryTabResultState(previous) !== 'ready' && homeLabDiscoveryTabResultState(previous) !== 'partial') return next;
+	const refreshFailure = next?.error || next?.failedLanes?.find(lane => lane?.error)?.error || new Error('Discovery refresh failed');
+	return {...previous, refreshFailure};
+};
+
 export const createHomeLabDiscoverySession = () => {
 	const seen = new Map();
 	return {

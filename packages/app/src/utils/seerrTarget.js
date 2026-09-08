@@ -8,13 +8,40 @@
 
 export const IDLE = {mediaId: null, mediaType: null};
 
-// How a Seerr title reaches the detail screen when the library has nothing to open for it.
-export const seerrDetailStub = ({mediaId, mediaType}) => ({
-	Id: `seerr-${mediaType}-${mediaId}`,
-	Type: mediaType === 'tv' ? 'Series' : 'Movie',
-	_seerrMediaId: mediaId,
-	_seerrMediaType: mediaType
-});
+const localMediaId = (value) => {
+	const id = String(value == null ? '' : value).trim();
+	return id || null;
+};
+
+// Discovery normally routes by TMDB id, but a provider-id reconciliation can also prove that
+// the title already exists in Jellyfin. Keep that local identity attached to the selection so
+// the detail screen can open the real Jellyfin item rather than a non-playable Seerr stub.
+export const seerrSelectionMediaId = ({tmdbId, jellyfinMediaId} = {}) => {
+	const localId = localMediaId(jellyfinMediaId);
+	return localId ? {tmdbId, jellyfinMediaId: localId} : tmdbId;
+};
+
+// How a Seerr title reaches the detail screen. A structured Discovery selection with a known
+// Jellyfin id opens the real library item; otherwise preserve the existing Seerr-only stub.
+export const seerrDetailStub = ({mediaId, mediaType}) => {
+	const structured = mediaId && typeof mediaId === 'object' ? mediaId : null;
+	const jellyfinMediaId = localMediaId(structured?.jellyfinMediaId);
+	const resolvedType = mediaType === 'tv' ? 'Series' : 'Movie';
+	if (jellyfinMediaId) {
+		return {
+			Id: jellyfinMediaId,
+			Type: resolvedType
+		};
+	}
+
+	const tmdbId = structured ? structured.tmdbId : mediaId;
+	return {
+		Id: `seerr-${mediaType}-${tmdbId}`,
+		Type: resolvedType,
+		_seerrMediaId: tmdbId,
+		_seerrMediaType: mediaType
+	};
+};
 
 export const isSeerrOnlyItem = (item) => item?._seerrMediaId != null;
 
