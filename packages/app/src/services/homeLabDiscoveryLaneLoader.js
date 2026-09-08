@@ -9,8 +9,9 @@ const positiveInt = (value, fallback) => {
 };
 
 const itemKey = (item, fallbackMediaType) => {
-	const id = item?.id ?? item?.tmdbId;
-	if (id == null) return null;
+	const rawId = item?.id ?? item?.tmdbId;
+	const id = Number(rawId);
+	if (!Number.isFinite(id) || id <= 0) return null;
 	const mediaType = item?.mediaType || item?.media_type || fallbackMediaType || 'unknown';
 	return `${mediaType}:${id}`;
 };
