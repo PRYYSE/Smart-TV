@@ -1,13 +1,5 @@
-import {loadSinceYouWatchedRows} from './homeRecommendations';
-import {
-	HOME_ROW_ITEM_FIELDS,
-	api as defaultJellyfinApi,
-	getServerUrl,
-	getUserId
-} from './jellyfinApi';
-
 const PAGE_SIZE = 15;
-const PERSONAL_DETAIL_FIELDS = `${HOME_ROW_ITEM_FIELDS},Tags,People,Studios,ProductionLocations,OriginalLanguage`;
+const PERSONAL_DETAIL_FIELDS = 'ProviderIds,Overview,Genres,CommunityRating,Tags,People,Studios,ProductionLocations,OriginalLanguage';
 const DIRECT_SLOTS = Object.freeze({
 	'recent-history': 1,
 	'favourites': 2,
@@ -26,6 +18,29 @@ const DIRECT_SLOTS = Object.freeze({
 	'rewatch': 15,
 	'recent-discovery-context': 16
 });
+
+// Keep the feature's testable recommendation policy independent from the
+// platform/runtime modules. Enact's Jest runtime cannot parse one of the ESM
+// Babel helpers pulled in by jellyfinApi at module-evaluation time, and the
+// policy itself does not need that runtime until a real recommendation is
+// requested. These adapters resolve the authoritative runtime services lazily
+// while dependency-injected tests remain completely platform-neutral.
+const runtimeApi = {
+	getItems: (...args) => {
+		const {api} = require('./jellyfinApi');
+		return api.getItems(...args);
+	}
+};
+
+const runtimeRowsLoader = (...args) => {
+	const {loadSinceYouWatchedRows} = require('./homeRecommendations');
+	return loadSinceYouWatchedRows(...args);
+};
+
+const runtimeIdentity = () => {
+	const {getServerUrl, getUserId} = require('./jellyfinApi');
+	return `${getServerUrl() || 'server'}|${getUserId() || 'user'}`;
+};
 
 const normalisedList = (value) => (
 	Array.isArray(value)
@@ -121,9 +136,9 @@ const settingsFor = (section) => ({
 
 export class HomeLabDiscoveryPersonalisation {
 	constructor({
-		api = defaultJellyfinApi,
-		rowsLoader = loadSinceYouWatchedRows,
-		identity = () => `${getServerUrl() || 'server'}|${getUserId() || 'user'}`,
+		api = runtimeApi,
+		rowsLoader = runtimeRowsLoader,
+		identity = runtimeIdentity,
 		pageSize = PAGE_SIZE
 	} = {}) {
 		this.api = api;
