@@ -18,6 +18,8 @@ import css from './HomeLabDiscovery.module.less';
 const SpottableDiv = Spottable('div');
 const SpottableButton = Spottable('button');
 const deepFocusMemory = new Map();
+const deepStateMemory = new Map();
+const MAX_DEEP_STATE_ENTRIES = 12;
 
 const mediaTypeFor = (item, fallback) => {
 	const value = item?.media_type || item?.mediaType || fallback;
@@ -33,6 +35,33 @@ const mediaYearFor = (item) => {
 };
 const mediaBackdropFor = (item) => item?.backdrop_path || item?.backdropPath;
 const mediaPosterFor = (item) => item?.poster_path || item?.posterPath;
+
+const sectionRevisionFor = (section) => JSON.stringify({
+	id: section?.id || '',
+	query: section?.query || null,
+	availabilityMode: section?.availabilityMode || 'all',
+	minItems: section?.minItems || null,
+	previewLimit: section?.previewLimit || null
+});
+
+const readDeepState = (key) => {
+	if (!key || !deepStateMemory.has(key)) return null;
+	const value = deepStateMemory.get(key);
+	deepStateMemory.delete(key);
+	deepStateMemory.set(key, value);
+	return value;
+};
+
+const rememberDeepState = (key, snapshot) => {
+	if (!key || !snapshot) return;
+	deepStateMemory.delete(key);
+	deepStateMemory.set(key, snapshot);
+	while (deepStateMemory.size > MAX_DEEP_STATE_ENTRIES) {
+		const oldest = deepStateMemory.keys().next().value;
+		if (oldest == null) break;
+		deepStateMemory.delete(oldest);
+	}
+};
 
 const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) => {
 	const {serverUrl, accessToken, user} = useAuth();
@@ -51,6 +80,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	const backdropTimerRef = useRef(null);
 	const gridScrollToRef = useRef(null);
 	const focusMemoryKey = `${serverUrl || ''}|${user?.Id || 'user'}|${sectionId || ''}`;
+	const stateMemoryKey = section ? `${focusMemoryKey}|${sectionRevisionFor(section)}` : null;
 
 	useEffect(() => {
 		if (!backHandlerRef) return;
@@ -98,24 +128,36 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	}, [accessToken, catalogueRetryNonce, sectionId, serverUrl]);
 
 	const controller = useMemo(() => {
-		if (!section || !serverUrl || !accessToken) return null;
+		if (!section || !serverUrl || !accessToken || !stateMemoryKey) return null;
 		return new HomeLabDiscoveryDeepController({
 			section,
-			loadPage: (current, {page}) => loadHomeLabDiscoveryPage({
+			initialState: readDeepState(stateMemoryKey),
+			loadPage: (current, {page, forceRefresh}) => loadHomeLabDiscoveryPage({
 				section: current,
 				page,
 				serverUrl,
 				accessToken,
-				blockNsfw: true
+				blockNsfw: true,
+				forceRefresh
 			})
 		});
-	}, [accessToken, section, serverUrl]);
+	}, [accessToken, section, serverUrl, stateMemoryKey]);
+
+	const applyBrowseState = useCallback((state) => {
+		itemsRef.current = state.items;
+		setBrowseState(state);
+		if (controller && stateMemoryKey) rememberDeepState(stateMemoryKey, controller.snapshot());
+	}, [controller, stateMemoryKey]);
 
 	useEffect(() => {
 		if (!controller) return;
 		let stale = false;
 		setIsLoading(true);
-		controller.loadInitial().then(async initialState => {
+		const retained = controller.state;
+		const initialLoad = retained.throughPage > 0 || retained.items.length > 0
+			? Promise.resolve(retained)
+			: controller.loadInitial();
+		initialLoad.then(async initialState => {
 			if (stale) return;
 			const remembered = Number(deepFocusMemory.get(focusMemoryKey) ?? 0);
 			let state = initialState;
@@ -123,8 +165,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 				state = await controller.loadThroughIndex(remembered);
 			}
 			if (stale) return;
-			itemsRef.current = state.items;
-			setBrowseState(state);
+			applyBrowseState(state);
 			const focusIndex = Math.max(0, Math.min(remembered, state.items.length - 1));
 			setFocusedItem(state.items[focusIndex] || state.items[0] || null);
 			setIsLoading(false);
@@ -134,7 +175,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 			setIsLoading(false);
 		});
 		return () => { stale = true; };
-	}, [controller, focusMemoryKey]);
+	}, [applyBrowseState, controller, focusMemoryKey]);
 
 	useEffect(() => {
 		if (!browseState?.items?.length || focusScheduledRef.current) return;
@@ -167,14 +208,12 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		loadMoreRef.current = true;
 		setIsLoadingMore(true);
 		try {
-			const state = await controller.loadMore();
-			itemsRef.current = state.items;
-			setBrowseState(state);
+			applyBrowseState(await controller.loadMore());
 		} finally {
 			loadMoreRef.current = false;
 			setIsLoadingMore(false);
 		}
-	}, [browseState?.hasMore, controller]);
+	}, [applyBrowseState, browseState?.hasMore, controller]);
 
 	const retry = useCallback(async () => {
 		if (!controller || loadMoreRef.current) return;
@@ -182,13 +221,12 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		setIsLoadingMore(true);
 		try {
 			const state = browseState?.items?.length ? await controller.retry() : await controller.loadInitial();
-			itemsRef.current = state.items;
-			setBrowseState(state);
+			applyBrowseState(state);
 		} finally {
 			loadMoreRef.current = false;
 			setIsLoadingMore(false);
 		}
-	}, [browseState?.items?.length, controller]);
+	}, [applyBrowseState, browseState?.items?.length, controller]);
 
 	const retryCatalogue = useCallback(() => setCatalogueRetryNonce(value => value + 1), []);
 	const captureGridScrollTo = useCallback(scrollTo => { gridScrollToRef.current = scrollTo; }, []);
