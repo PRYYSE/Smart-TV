@@ -193,7 +193,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
 const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, onSelectItem, onSelectGenre, onOpenRequests}) => {
 	const {settings} = useSettings();
 	const tabs = useMemo(() => catalogue.tabs || [], [catalogue.tabs]);
-	const viewKey = `${serverUrl}|${userId || 'user'}|${catalogue.generatedAt || catalogue.schemaVersion}`;
+	const viewKey = `${serverUrl}|${userId || 'user'}|${catalogue.generatedAt || catalogue.catalogueVersion || catalogue.schemaVersion}`;
 
 	if (retainedLanding.key !== viewKey) {
 		retainedLanding = {key: viewKey, activeTabId: null, tabResults: {}};
@@ -216,11 +216,12 @@ const HomeLabDiscoveryExperience = ({catalogue, serverUrl, accessToken, userId, 
 				tab,
 				sessionSeed: `${viewKey}|${tab.id}`,
 				maxConcurrentLoads: 4,
-				loadLane: section => loadHomeLabDiscoveryLane({
+				loadLane: (section, {forceRefresh = false} = {}) => loadHomeLabDiscoveryLane({
 					section,
 					serverUrl,
 					accessToken,
-					blockNsfw: true
+					blockNsfw: true,
+					forceRefresh
 				})
 			}));
 		}
