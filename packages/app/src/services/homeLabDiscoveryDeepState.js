@@ -37,11 +37,16 @@ export const rememberHomeLabDiscoveryDeepState = (key, snapshot, {maxEntries = D
 	}
 };
 
-export const invalidateHomeLabDiscoveryDeepState = ({serverUrl, userId}) => {
-	const prefix = `${scopeKey({serverUrl, userId})}|`;
+export const invalidateHomeLabDiscoveryDeepStateScope = (scope) => {
+	const normalized = String(scope || '').trim();
+	if (!normalized) return;
+	const prefix = `${normalized}|`;
 	for (const key of Array.from(retained.keys())) {
 		if (key.startsWith(prefix)) retained.delete(key);
 	}
 };
+
+export const invalidateHomeLabDiscoveryDeepState = ({serverUrl, userId}) =>
+	invalidateHomeLabDiscoveryDeepStateScope(scopeKey({serverUrl, userId}));
 
 export const clearHomeLabDiscoveryDeepState = () => retained.clear();
