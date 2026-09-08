@@ -50,7 +50,15 @@ const mediaRatingFor = (item) => Number(item?.vote_average ?? item?.voteAverage 
 const mediaBackdropFor = (item) => item?.backdrop_path || item?.backdropPath;
 const mediaPosterFor = (item) => item?.poster_path || item?.posterPath;
 
-const DiscoveryMediaCard = memo(function DiscoveryMediaCard({item, fallbackMediaType, onSelect, onFocus, spotlightId}) {
+const DiscoveryMediaCard = memo(function DiscoveryMediaCard({
+	item,
+	fallbackMediaType,
+	onSelect,
+	onFocus,
+	spotlightId,
+	rowIndex,
+	itemIndex
+}) {
 	const mediaType = mediaTypeFor(item, fallbackMediaType);
 	const title = mediaTitleFor(item);
 	const year = mediaYearFor(item);
@@ -64,7 +72,7 @@ const DiscoveryMediaCard = memo(function DiscoveryMediaCard({item, fallbackMedia
 		onSelect?.({mediaId, mediaType});
 	}, [item, mediaType, onSelect]);
 
-	const handleFocus = useCallback(() => onFocus?.(item), [item, onFocus]);
+	const handleFocus = useCallback(() => onFocus?.(item, rowIndex, itemIndex), [item, itemIndex, onFocus, rowIndex]);
 
 	return (
 		<SpottableDiv
@@ -141,6 +149,7 @@ const DiscoveryRow = memo(function DiscoveryRow({
 	}, [onRowFocus, rowIndex]);
 
 	const handleSeeAll = useCallback(() => onOpenDeep?.(section, rowIndex), [onOpenDeep, rowIndex, section]);
+	const handleSeeAllFocus = useCallback(() => onRowFocus?.(rowIndex, {target: 'see-all'}), [onRowFocus, rowIndex]);
 
 	if (!section || !items.length) return null;
 
@@ -160,14 +169,16 @@ const DiscoveryRow = memo(function DiscoveryRow({
 							item={item}
 							fallbackMediaType={section.query?.mediaType}
 							onSelect={onSelectItem}
-							onFocus={(focused) => onFocusItem?.(focused, rowIndex, index)}
+							onFocus={onFocusItem}
+							rowIndex={rowIndex}
+							itemIndex={index}
 							spotlightId={`homelab-discovery-row-${rowIndex}-item-${index}`}
 						/>
 					))}
 					<SpottableButton
 						className={css.seeAllCard}
 						onClick={handleSeeAll}
-						onFocus={() => onRowFocus?.(rowIndex, {target: 'see-all'})}
+						onFocus={handleSeeAllFocus}
 						spotlightId={`homelab-discovery-row-${rowIndex}-see-all`}
 					>
 						<span className={css.seeAllIcon}>→</span>
