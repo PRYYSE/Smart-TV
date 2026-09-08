@@ -1,5 +1,7 @@
 const PAGE_SIZE = 15;
 const SEED_LIMIT = 60;
+const MAX_CACHED_ROWS = 24;
+const UPSTREAM_FETCH_BUDGET = 4;
 const PERSONAL_DETAIL_FIELDS = 'ProviderIds,Overview,Genres,CommunityRating,Tags,People,Studios,ProductionLocations,OriginalLanguage,RunTimeTicks,ProductionYear,UserData,SeriesId';
 
 const BASE_POLICIES = Object.freeze({
@@ -247,7 +249,10 @@ const toDiscoveryItem = (item) => {
 	};
 };
 
-const matchesMediaType = (item, wanted) => !wanted || mediaTypeFor(item) === wanted;
+const matchesMediaType = (item, wanted) => {
+	const normalized = String(wanted || '').trim().toLowerCase();
+	return !normalized || normalized === 'all' || normalized === 'any' || mediaTypeFor(item) === normalized;
+};
 
 const matchesPolicy = (item, policy, now = new Date()) => {
 	if (!matchesMediaType(item, policy.mediaType)) return false;
@@ -284,19 +289,30 @@ const itemTypesFor = (policy, history = false) => {
 	return history ? 'Movie,Episode' : 'Movie,Series';
 };
 
+const reportedTotalPages = (payload) => {
+	const value = Number(payload?.totalPages ?? payload?.total_pages);
+	return Number.isInteger(value) && value > 0 ? value : null;
+};
+
+const rowResultCount = (row) => row.pages.reduce((total, page) => total + page.length, 0) + row.pending.length;
+
 export class HomeLabDiscoveryPersonalisation {
 	constructor({
 		api = runtimeApi,
 		seerr = runtimeSeerr,
 		identity = runtimeIdentity,
 		pageSize = PAGE_SIZE,
-		now = () => new Date()
+		now = () => new Date(),
+		maxCachedRows = MAX_CACHED_ROWS,
+		upstreamFetchBudget = UPSTREAM_FETCH_BUDGET
 	} = {}) {
 		this.api = api;
 		this.seerr = seerr;
 		this.identity = identity;
 		this.pageSize = Math.max(1, Number(pageSize) || PAGE_SIZE);
 		this.now = now;
+		this.maxCachedRows = Math.max(1, Number(maxCachedRows) || MAX_CACHED_ROWS);
+		this.upstreamFetchBudget = Math.max(1, Number(upstreamFetchBudget) || UPSTREAM_FETCH_BUDGET);
 		this.cache = new Map();
 	}
 
@@ -310,27 +326,39 @@ export class HomeLabDiscoveryPersonalisation {
 		const safePage = Math.max(1, Number(page) || 1);
 		const cacheKey = `${this.identity()}|${section?.id || 'section'}|${policy.strategy}|${policy.mediaType || 'any'}`;
 		if (forceRefresh) this.cache.delete(cacheKey);
-		let cached = this.cache.get(cacheKey);
-		if (!cached) {
-			cached = this._loadRow(section, policy);
-			this.cache.set(cacheKey, cached);
+
+		let rowPromise = this.cache.get(cacheKey);
+		if (rowPromise) {
+			this.cache.delete(cacheKey);
+			this.cache.set(cacheKey, rowPromise);
+		} else {
+			rowPromise = this._createRow(section, policy);
+			this.cache.set(cacheKey, rowPromise);
+			this._trimCache();
 		}
+
 		let row;
 		try {
-			row = await cached;
+			row = await rowPromise;
 		} catch (error) {
-			this.cache.delete(cacheKey);
+			if (this.cache.get(cacheKey) === rowPromise) this.cache.delete(cacheKey);
 			throw error;
 		}
-		const totalResults = row.items.length;
-		const totalPages = totalResults === 0 ? 0 : Math.ceil(totalResults / this.pageSize);
-		const start = (safePage - 1) * this.pageSize;
+
+		await this._withRowLock(row, () => this._ensurePage(row, section, policy, safePage));
+		const results = row.pages[safePage - 1] || [];
+		const sourceFinished = row.exhausted && row.pending.length === 0;
+		const knownResultCount = rowResultCount(row);
+		const totalPages = sourceFinished
+			? row.pages.length
+			: Math.max(safePage + 1, row.pages.length + 1);
+
 		return {
 			page: safePage,
 			totalPages,
-			totalResults,
+			totalResults: sourceFinished ? knownResultCount : 0,
 			displayTitle: row.displayTitle,
-			results: start < totalResults ? row.items.slice(start, start + this.pageSize) : []
+			results
 		};
 	}
 
@@ -338,63 +366,185 @@ export class HomeLabDiscoveryPersonalisation {
 		this.cache.clear();
 	}
 
-	async _loadRow(section, policy) {
-		if (policy.direct) return this._loadDirectRow(section, policy);
-		const seeds = await this._loadSeeds(policy);
-		if (!seeds.length) return {displayTitle: section?.title || 'For You', items: []};
-		const start = (Math.max(1, Number(policy.slot) || 1) - 1) % seeds.length;
-		const aggregated = [];
-		let chosenSeed = null;
-		for (let attempt = 0; attempt < Math.min(4, seeds.length) && aggregated.length < this.pageSize; attempt += 1) {
-			const seed = seeds[(start + attempt) % seeds.length];
-			const tmdbId = positiveTmdbId(seed);
-			const mediaType = mediaTypeFor(seed);
-			if (!tmdbId || !mediaType) continue;
-			let payload;
-			if (mediaType === 'movie' && typeof this.seerr?.getMovieRecommendations === 'function') {
-				payload = await this.seerr.getMovieRecommendations(tmdbId, 1);
-			} else if (mediaType === 'tv' && typeof this.seerr?.getTvRecommendations === 'function') {
-				payload = await this.seerr.getTvRecommendations(tmdbId, 1);
-			} else {
-				continue;
-			}
-			const candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
-			const resolved = await this._resolveOwned(candidates);
-			for (const item of resolved) {
-				if (!matchesResultPolicy(item, policy)) continue;
-				aggregated.push(item);
-			}
-			if (!chosenSeed && aggregated.length) chosenSeed = seed;
+	_trimCache() {
+		while (this.cache.size > this.maxCachedRows) {
+			const oldest = this.cache.keys().next().value;
+			if (oldest == null) break;
+			this.cache.delete(oldest);
 		}
-		const items = this._convert(uniqueByIdentity(aggregated), section, policy);
+	}
+
+	_withRowLock(row, action) {
+		const previous = row.lock || Promise.resolve();
+		const next = previous.then(action, action);
+		row.lock = next.catch(() => {});
+		return next;
+	}
+
+	_baseRow(section, policy, kind) {
 		return {
-			displayTitle: this._displayTitle(section, policy, chosenSeed),
-			items
+			kind,
+			sectionId: section?.id || 'section',
+			policy,
+			displayTitle: section?.title || 'For You',
+			pages: [],
+			pending: [],
+			seen: new Set(),
+			exhausted: false,
+			lock: Promise.resolve()
 		};
 	}
 
-	async _loadDirectRow(section, policy) {
+	async _createRow(section, policy) {
+		if (policy.direct) return this._createDirectRow(section, policy);
+		const row = this._baseRow(section, policy, 'recommendations');
+		const seeds = await this._loadSeeds(policy);
+		if (!seeds.length) {
+			row.exhausted = true;
+			return row;
+		}
+		const start = (Math.max(1, Number(policy.slot) || 1) - 1) % seeds.length;
+		const ordered = seeds.map((_, index) => seeds[(start + index) % seeds.length]);
+		row.seedStates = ordered.map(seed => ({seed, nextPage: 1, totalPages: null, exhausted: false}));
+		row.seedCursor = 0;
+		row.chosenSeed = null;
+		return row;
+	}
+
+	async _createDirectRow(section, policy) {
+		const paged = policy.source === 'trending' || policy.source === 'popular-anime';
+		const row = this._baseRow(section, policy, paged ? 'direct-paged' : 'direct-static');
+		if (paged) {
+			row.upstreamPage = 1;
+			row.upstreamTotalPages = null;
+			return row;
+		}
+
 		let candidates = [];
 		if (policy.source === 'recently-added' && typeof this.seerr?.getRecentlyAdded === 'function') {
 			const payload = await this.seerr.getRecentlyAdded(80);
 			const source = Array.isArray(payload) ? payload : (payload?.results || []);
 			candidates = source.map(candidateFromMediaRecord).filter(Boolean);
-		} else if (policy.source === 'trending' && typeof this.seerr?.trending === 'function') {
-			const payload = await this.seerr.trending(1);
-			candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
-		} else if (policy.source === 'popular-anime' && typeof this.seerr?.discoverTv === 'function') {
-			const payload = await this.seerr.discoverTv(1);
-			candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
 		} else {
 			candidates = await this._loadSeeds(policy);
 		}
+		await this._appendCandidates(row, candidates, section, policy);
+		row.exhausted = true;
+		return row;
+	}
+
+	async _ensurePage(row, section, policy, page) {
+		while (row.pages.length < page && (row.pending.length > 0 || !row.exhausted)) {
+			await this._fillLogicalPage(row, section, policy);
+		}
+		while (row.pages.length < page) row.pages.push([]);
+	}
+
+	async _fillLogicalPage(row, section, policy) {
+		const output = [];
+		let requests = 0;
+		try {
+			while (output.length < this.pageSize) {
+				while (row.pending.length && output.length < this.pageSize) output.push(row.pending.shift());
+				if (output.length >= this.pageSize || row.exhausted) break;
+				if (requests >= this.upstreamFetchBudget) break;
+				if (row.kind === 'recommendations') await this._fetchNextRecommendationBatch(row, section, policy);
+				else if (row.kind === 'direct-paged') await this._fetchNextDirectBatch(row, section, policy);
+				else row.exhausted = true;
+				requests += 1;
+			}
+		} catch (error) {
+			row.pending = output.concat(row.pending);
+			throw error;
+		}
+		row.pages.push(output);
+	}
+
+	_nextSeedState(row) {
+		const states = row.seedStates || [];
+		if (!states.length) return null;
+		for (let offset = 0; offset < states.length; offset += 1) {
+			const index = (row.seedCursor + offset) % states.length;
+			const state = states[index];
+			if (!state.exhausted) return {state, index};
+		}
+		return null;
+	}
+
+	async _fetchNextRecommendationBatch(row, section, policy) {
+		let next = this._nextSeedState(row);
+		while (next) {
+			const {state, index} = next;
+			const seed = state.seed;
+			const tmdbId = positiveTmdbId(seed);
+			const mediaType = mediaTypeFor(seed);
+			if (!tmdbId || !mediaType) {
+				state.exhausted = true;
+				next = this._nextSeedState(row);
+				continue;
+			}
+
+			const requestedPage = state.nextPage;
+			let payload;
+			if (mediaType === 'movie' && typeof this.seerr?.getMovieRecommendations === 'function') {
+				payload = await this.seerr.getMovieRecommendations(tmdbId, requestedPage);
+			} else if (mediaType === 'tv' && typeof this.seerr?.getTvRecommendations === 'function') {
+				payload = await this.seerr.getTvRecommendations(tmdbId, requestedPage);
+			} else {
+				state.exhausted = true;
+				next = this._nextSeedState(row);
+				continue;
+			}
+
+			const candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+			const beforeCount = row.pending.length;
+			await this._appendCandidates(row, candidates, section, policy);
+			if (!row.chosenSeed && row.pending.length > beforeCount) {
+				row.chosenSeed = seed;
+				row.displayTitle = this._displayTitle(section, policy, seed);
+			}
+
+			const totalPages = reportedTotalPages(payload);
+			state.totalPages = totalPages;
+			state.exhausted = candidates.length === 0 || totalPages == null || requestedPage >= totalPages;
+			if (!state.exhausted) state.nextPage = requestedPage + 1;
+			row.seedCursor = (index + 1) % (row.seedStates?.length || 1);
+			row.exhausted = row.seedStates.every(candidate => candidate.exhausted);
+			return;
+		}
+		row.exhausted = true;
+	}
+
+	async _fetchNextDirectBatch(row, section, policy) {
+		const requestedPage = row.upstreamPage;
+		let payload;
+		if (policy.source === 'trending' && typeof this.seerr?.trending === 'function') {
+			payload = await this.seerr.trending(requestedPage);
+		} else if (policy.source === 'popular-anime' && typeof this.seerr?.discoverTv === 'function') {
+			payload = await this.seerr.discoverTv(requestedPage);
+		} else {
+			row.exhausted = true;
+			return;
+		}
+
+		const candidates = (payload?.results || []).map(candidateFromSeerr).filter(Boolean);
+		await this._appendCandidates(row, candidates, section, policy);
+		const totalPages = reportedTotalPages(payload);
+		row.upstreamTotalPages = totalPages;
+		row.exhausted = candidates.length === 0 || totalPages == null || requestedPage >= totalPages;
+		if (!row.exhausted) row.upstreamPage = requestedPage + 1;
+	}
+
+	async _appendCandidates(row, candidates, section, policy) {
 		const hydrated = await this._hydrateItems(candidates);
 		const resolved = await this._resolveOwned(hydrated);
-		const filtered = resolved.filter(item => matchesResultPolicy(item, policy));
-		return {
-			displayTitle: section?.title || 'For You',
-			items: this._convert(uniqueByIdentity(filtered), section, policy)
-		};
+		const converted = this._convert(uniqueByIdentity(resolved), section, policy);
+		for (const item of converted) {
+			const key = `${item.mediaType}:${item.id}`;
+			if (row.seen.has(key)) continue;
+			row.seen.add(key);
+			row.pending.push(item);
+		}
 	}
 
 	async _loadSeeds(policy) {
