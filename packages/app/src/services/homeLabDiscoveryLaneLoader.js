@@ -64,13 +64,13 @@ export const loadHomeLabDiscoveryPage = async ({
 		if (!personalisation || typeof personalisation.load !== 'function') {
 			throw new Error(`Discovery section ${section?.id || 'unknown'} has no personalisation source on webOS`);
 		}
-		const raw = await personalisation.load(section, {
+		const personalisedPayload = await personalisation.load(section, {
 			page: safePage,
 			forceRefresh: forceRefresh && safePage === 1
 		});
 		return applyMembershipAndDedup(
 			section,
-			normaliseHomeLabDiscoveryPage(raw, safePage),
+			normaliseHomeLabDiscoveryPage(personalisedPayload, safePage),
 			{blockNsfw}
 		);
 	}
