@@ -157,6 +157,33 @@ describe('Home Lab Discovery Jellyfin personalisation', () => {
 		expect(loaded.results.map(item => item.id)).toEqual([401]);
 	});
 
+	test('mediaType all accepts both movie and series personal results', async () => {
+		const tvSeed = {
+			Id: 'series-seed',
+			Type: 'Series',
+			Name: 'Series Seed',
+			ProviderIds: {Tmdb: '90'},
+			UserData: {Played: true}
+		};
+		const api = {
+			getItems: jest.fn(async () => ({Items: [movie('movie-seed', 50, {Name: 'Movie Seed'}), tvSeed]})),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr([seerrMovie(501)]);
+		seerr.getTvRecommendations.mockResolvedValue({results: [{
+			id: 502,
+			mediaType: 'tv',
+			name: 'External Series',
+			voteAverage: 8.0
+		}]});
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'all'});
+		const loaded = await personalisation.load(section({
+			query: {source: 'personalised', mediaType: 'all', seedStrategy: 'recent-history'}
+		}));
+		expect(loaded.results.length).toBeGreaterThan(0);
+		expect(loaded.results.every(item => ['movie', 'tv'].includes(item.mediaType))).toBe(true);
+	});
+
 	test('pages a cached recommendation result and force refresh reloads it', async () => {
 		const api = baseApi();
 		let generation = 0;
@@ -179,5 +206,33 @@ describe('Home Lab Discovery Jellyfin personalisation', () => {
 		const refreshed = await personalisation.load(section(), {page: 1, forceRefresh: true});
 		expect(refreshed.results.map(item => item.id)).toEqual([21, 22]);
 		expect(seerr.getMovieRecommendations).toHaveBeenCalledTimes(2);
+	});
+
+	test('deep pages fetch later upstream recommendation pages without refetching page one', async () => {
+		const api = baseApi();
+		const seerr = baseSeerr();
+		seerr.getMovieRecommendations.mockImplementation(async (_tmdbId, page) => ({
+			page,
+			totalPages: 3,
+			results: [seerrMovie(page * 10 + 1), seerrMovie(page * 10 + 2)]
+		}));
+		const personalisation = new HomeLabDiscoveryPersonalisation({
+			api,
+			seerr,
+			identity: () => 'deep',
+			pageSize: 2,
+			upstreamFetchBudget: 1
+		});
+
+		const first = await personalisation.load(section(), {page: 1});
+		const second = await personalisation.load(section(), {page: 2});
+		const third = await personalisation.load(section(), {page: 3});
+
+		expect(first.results.map(item => item.id)).toEqual([11, 12]);
+		expect(second.results.map(item => item.id)).toEqual([21, 22]);
+		expect(third.results.map(item => item.id)).toEqual([31, 32]);
+		expect(seerr.getMovieRecommendations.mock.calls.map(call => call[1])).toEqual([1, 2, 3]);
+		expect(third.totalPages).toBe(3);
+		expect(third.totalResults).toBe(6);
 	});
 });
