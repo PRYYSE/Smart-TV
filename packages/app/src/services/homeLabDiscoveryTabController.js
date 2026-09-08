@@ -1,4 +1,5 @@
 import {composeHomeLabDiscoveryTab} from './homeLabDiscoveryComposer';
+import {invalidateHomeLabDiscoveryDeepStateScope} from './homeLabDiscoveryDeepState';
 import {isHomeLabDiscoverySectionExecutable} from './homeLabDiscoveryLaneLoader';
 import {
 	HomeLabDiscoveryRotationStore,
@@ -160,6 +161,7 @@ export class HomeLabDiscoveryTabController {
 	}
 
 	refresh() {
+		invalidateHomeLabDiscoveryDeepStateScope(this.rotationScope);
 		return this.load({rotate: true, forceRefresh: true});
 	}
 
@@ -167,6 +169,7 @@ export class HomeLabDiscoveryTabController {
 		this.refreshNonce = 0;
 		this.session.reset();
 		this.rotationHistory.clear();
+		invalidateHomeLabDiscoveryDeepStateScope(this.rotationScope);
 		this._persistRotation();
 	}
 
