@@ -110,6 +110,37 @@ describe('Home Lab Discovery lane loader', () => {
 		expect(personalisation.load).toHaveBeenCalledWith(personalSection, {page: 1, forceRefresh: true});
 	});
 
+	test('personalised landing previews do not prefetch deeper recommendation pages', async () => {
+		const personalSection = section({
+			previewLimit: 20,
+			minItems: 1,
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'recent-history'}
+		});
+		const personalisation = {
+			supports: jest.fn(() => true),
+			load: jest.fn(async (_section, options) => ({
+				page: options.page,
+				totalPages: 5,
+				totalResults: 0,
+				results: [{id: options.page, mediaType: 'movie'}]
+			}))
+		};
+
+		const loaded = await loadHomeLabDiscoveryLane({
+			section: personalSection,
+			serverUrl: 'http://server',
+			accessToken: 'token',
+			personalisation,
+			maxPagesPerScan: 6
+		});
+
+		expect(loaded.items.map(item => item.id)).toEqual([1]);
+		expect(loaded.throughPage).toBe(1);
+		expect(loaded.totalPages).toBe(5);
+		expect(personalisation.load).toHaveBeenCalledTimes(1);
+		expect(personalisation.load).toHaveBeenCalledWith(personalSection, {page: 1, forceRefresh: false});
+	});
+
 	test('unsupported personalised semantics fail closed before loading a fake lane', async () => {
 		const personalSection = section({
 			id: 'weekend-binge',
