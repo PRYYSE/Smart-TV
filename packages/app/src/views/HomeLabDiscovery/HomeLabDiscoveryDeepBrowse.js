@@ -16,8 +16,11 @@ import {
 } from '../../services/homeLabDiscoveryDeepState';
 import {loadHomeLabDiscoveryPage} from '../../services/homeLabDiscoveryLaneLoader';
 import {findHomeLabDiscoverySection} from '../../services/homeLabDiscoveryRoute';
+import {homeLabDiscoveryVisualPolicy} from '../../services/homeLabDiscoveryVisualPolicy';
 import seerrApi from '../../services/seerrApi';
+import {getDetectedPerfTier} from '../../utils/perfTier';
 import {seerrSelectionMediaId} from '../../utils/seerrTarget';
+import HomeLabDiscoveryPoster from './HomeLabDiscoveryPoster';
 
 import css from './HomeLabDiscovery.module.less';
 
@@ -43,6 +46,17 @@ const mediaPosterFor = (item) => item?.poster_path || item?.posterPath;
 const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) => {
 	const {serverUrl, accessToken, user} = useAuth();
 	const {settings} = useSettings();
+	const visualPolicy = useMemo(() => homeLabDiscoveryVisualPolicy({
+		performanceMode: settings.performanceMode || 'auto',
+		detectedTier: getDetectedPerfTier(),
+		viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 1080,
+		configuredBlur: settings.backdropBlurHome
+	}), [settings.backdropBlurHome, settings.performanceMode]);
+	const deepCardStyle = useMemo(() => visualPolicy.compactViewport ? {
+		width: `${visualPolicy.gridItemSize.minWidth}px`,
+		height: `${visualPolicy.gridItemSize.minHeight}px`
+	} : undefined, [visualPolicy.compactViewport, visualPolicy.gridItemSize.minHeight, visualPolicy.gridItemSize.minWidth]);
+	const deepPosterStyle = useMemo(() => visualPolicy.compactViewport ? {height: '240px'} : undefined, [visualPolicy.compactViewport]);
 	const [section, setSection] = useState(null);
 	const [sectionError, setSectionError] = useState(null);
 	const [browseState, setBrowseState] = useState(null);
@@ -196,11 +210,15 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 	const updateBackdrop = useCallback((item) => {
 		setFocusedItem(item);
 		if (backdropTimerRef.current) clearTimeout(backdropTimerRef.current);
+		if (settings.showHomeBackdrop === false) {
+			setBackdropUrl('');
+			return;
+		}
 		backdropTimerRef.current = setTimeout(() => {
 			const path = mediaBackdropFor(item);
-			setBackdropUrl(path ? seerrApi.getImageUrl(path, 'w1280') : '');
-		}, 130);
-	}, []);
+			setBackdropUrl(path ? seerrApi.getImageUrl(path, visualPolicy.backdropSize) : '');
+		}, visualPolicy.backdropDebounceMs);
+	}, [settings.showHomeBackdrop, visualPolicy.backdropDebounceMs, visualPolicy.backdropSize]);
 
 	const loadMore = useCallback(async () => {
 		if (!controller || loadMoreRef.current || !browseState?.hasMore) return;
@@ -234,8 +252,8 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 		const index = Number(event.currentTarget?.dataset?.index);
 		const item = itemsRef.current[index];
 		if (!item) return;
-		const tmdbId = mediaIdFor(item);
-		if (tmdbId == null) return;
+		const tmdbId = Number(mediaIdFor(item));
+		if (!Number.isFinite(tmdbId) || tmdbId <= 0) return;
 		const mediaId = seerrSelectionMediaId({
 			tmdbId,
 			jellyfinMediaId: item?.mediaInfo?.jellyfinMediaId
@@ -269,13 +287,10 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 				onClick={handleItemClick}
 				onFocus={handleItemFocus}
 				spotlightId={`homelab-deep-item-${index}`}
+				style={deepCardStyle}
 			>
-				<div className={css.deepPosterContainer}>
-					{imageUrl ? (
-						<img className={css.poster} src={imageUrl} alt={title} loading="lazy" />
-					) : (
-						<div className={css.noPoster}>{title.slice(0, 1)}</div>
-					)}
+				<div className={css.deepPosterContainer} style={deepPosterStyle}>
+					<HomeLabDiscoveryPoster imageUrl={imageUrl} title={title} />
 					<div className={`${css.mediaTypeBadge} ${mediaType === 'movie' ? css.movieBadge : css.seriesBadge}`}>
 						{mediaType === 'movie' ? $L('MOVIE') : $L('SERIES')}
 					</div>
@@ -287,7 +302,7 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 				{year && <div className={css.deepCardMeta}>{year}</div>}
 			</SpottableDiv>
 		);
-	}, [handleItemClick, handleItemFocus, section?.query?.mediaType]);
+	}, [deepCardStyle, deepPosterStyle, handleItemClick, handleItemFocus, section?.query?.mediaType]);
 
 	const items = browseState?.items || [];
 	const totalResults = Number(browseState?.totalResults || 0);
@@ -319,7 +334,9 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 							className={css.backdropImage}
 							style={{
 								backgroundImage: `url(${backdropUrl})`,
-								filter: settings.backdropBlurHome > 0 ? `blur(${settings.backdropBlurHome}px)` : 'none'
+								filter: visualPolicy.backdropBlur > 0 ? `blur(${visualPolicy.backdropBlur}px)` : 'none',
+								transition: visualPolicy.constrainedMotion ? 'none' : undefined,
+								transform: visualPolicy.constrainedMotion ? 'none' : undefined
 							}}
 						/>
 					)}
@@ -368,12 +385,15 @@ const HomeLabDiscoveryDeepBrowse = ({sectionId, onSelectItem, backHandlerRef}) =
 								cbScrollTo={captureGridScrollTo}
 								dataSize={items.length}
 								itemRenderer={renderItem}
-								itemSize={{minWidth: 190, minHeight: 350}}
-								spacing={20}
+								itemSize={visualPolicy.gridItemSize}
+								spacing={visualPolicy.compactViewport ? 14 : 20}
 								spotlightId="homelab-deep-grid"
 							/>
 							{isLoadingMore && !browseState?.error && (
 								<div className={css.deepLoadingMore}>{$L('Loading more...')}</div>
+							)}
+							{!isLoadingMore && !browseState?.error && !browseState?.hasMore && (
+								<div className={css.deepLoadingMore}>{$L('End of list')}</div>
 							)}
 							{browseState?.error && (
 								<div className={css.deepRetryOverlay}>
