@@ -24,8 +24,8 @@ Do not overwrite the preserved v1 candidate or app identity.
 
 ## Current verified product milestone
 
-**Verified product source:** `3cf33a70b45854f7db9b703a011511f941f21802`  
-**Workflow:** `34184135140` / run **#49** — **GREEN**
+**Verified product source:** `a3a3317894a90bbab8b12cc7764187a8c5591369`  
+**Workflow:** `34184420915` / run **#50** — **GREEN**
 
 Passed:
 
@@ -40,11 +40,11 @@ Passed:
 
 Artifact:
 
-- ID: `10039954551`
-- name: `Moonfin-HomeLab-webOS-DiscoveryV2-3cf33a70b45854f7db9b703a011511f941f21802`
-- artifact size: 4,312,559 bytes
-- artifact digest: `sha256:870e681ff9b3023c007b8ee1392e23362b78b1b1ea277a61683836e457fb0e6c`
-- IPK manifest SHA-256: `5f7012852c7c0dbad17876cb079ba9eb98e28cfa335b7b1414ec6ce13e29a030`
+- ID: `10040048352`
+- name: `Moonfin-HomeLab-webOS-DiscoveryV2-a3a3317894a90bbab8b12cc7764187a8c5591369`
+- artifact size: 4,312,422 bytes
+- artifact digest: `sha256:6e765d2ad65fcd0cfb487bfc13075da209332e3f5004ea3e14a434b8d2661eef`
+- IPK manifest SHA-256: `24e7a3af27c6ddf77d747b9990780073edb692ad6cef6453957d3afc45ee8e06`
 - package identity remains `org.moonfin.webos` / `2.7.0` / `index.html`
 
 The branch may contain newer documentation-only commits. The verified product source above remains the code/package acceptance point until another source-changing workflow passes.
@@ -90,6 +90,7 @@ The latest verified batch deliberately reduces work on constrained LG hardware w
 2. **Compact deep browsing for shorter displays**
    - viewports at or below 800 px height use a 160 x 300 virtual-grid footprint, 240 px poster area, tighter spacing and lower-resolution backdrop asset
    - normal 1080p behaviour retains the existing 190 x 350 grid footprint
+   - the compact card sizing is merged with Enact VirtualGrid's supplied positioning style rather than replacing it, preserving virtual-list transforms/positioning on legacy webOS
 3. **Artwork failure behaviour**
    - missing poster paths and poster network/image failures now use the existing text fallback instead of leaving a broken-image tile
 4. **Provider identity safety**
@@ -104,7 +105,7 @@ The latest verified batch deliberately reduces work on constrained LG hardware w
    - it does not include media titles or Jellyfin IDs
    - logger remains dormant unless existing diagnostic/server logging is enabled; no new telemetry or external service was added
 
-Regression coverage now includes the visual policy, aggregate quality accounting and malformed-identity filtering in addition to the earlier personalisation/deep/refresh/detail-routing gates.
+Regression coverage includes the visual policy, aggregate quality accounting and malformed-identity filtering in addition to the earlier personalisation/deep/refresh/detail-routing gates.
 
 ## Remaining webOS gates
 
@@ -121,7 +122,7 @@ Current Flutter/Web/Android/Android-TV v2 personalisation still uses named-strat
 
 ## Exact next action
 
-Prepare and execute a controlled **LG OLED65C6PSA acceptance** pass using the verified `3cf33a70...` candidate. Keep installation/update reversible and capture only the minimum diagnostics needed to evaluate launch, rendering/performance, remote focus/back, real-data recommendation quality, requests/details and owned playback. Do not promote it to production merely because the package installs.
+Prepare and execute a controlled **LG OLED65C6PSA acceptance** pass using the verified `a3a3317894a90bbab8b12cc7764187a8c5591369` candidate. Keep installation/update reversible and capture only the minimum diagnostics needed to evaluate launch, rendering/performance, remote focus/back, real-data recommendation quality, requests/details and owned playback. Do not promote it to production merely because the package installs.
 
 If direct device execution is unavailable from the current agent, prepare the exact candidate/install/rollback and acceptance procedure with minimal user-side commands rather than pretending the physical gate passed.
 
