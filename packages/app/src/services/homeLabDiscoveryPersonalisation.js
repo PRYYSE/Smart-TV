@@ -127,6 +127,12 @@ const sectionRequiresAnime = (section) => {
 	return tags.includes('anime') || strategy.startsWith('anime-') || String(section?.id || '').toLowerCase().startsWith('anime');
 };
 
+const personalDisplayTitle = (section, policy) => (
+	policy?.source === 'random' && policy?.animeOnly
+		? 'Something Different in Anime'
+		: (section?.title || 'For You')
+);
+
 export const isHomeLabDiscoveryAnimeItem = (item) => {
 	const tags = normalisedList(item?.Tags || item?.tags);
 	if (tags.includes('anime')) return true;
@@ -387,7 +393,7 @@ export class HomeLabDiscoveryPersonalisation {
 			kind,
 			sectionId: section?.id || 'section',
 			policy,
-			displayTitle: section?.title || 'For You',
+			displayTitle: personalDisplayTitle(section, policy),
 			pages: [],
 			pending: [],
 			seen: new Set(),
@@ -551,12 +557,12 @@ export class HomeLabDiscoveryPersonalisation {
 	async _loadSeeds(policy) {
 		let seeds;
 		if (policy.source === 'positive') {
-			const [likes, favourites, history] = await Promise.all([
+			const [likes, favourites, highRatings] = await Promise.all([
 				this._loadJellyfinSeeds('likes', policy),
 				this._loadJellyfinSeeds('favourites', policy),
-				this._loadJellyfinSeeds('history', policy)
+				this._loadHighRatingSeeds(policy)
 			]);
-			seeds = uniqueByIdentity([...likes, ...favourites, ...history]);
+			seeds = uniqueByIdentity([...likes, ...favourites, ...highRatings]);
 		} else if (policy.source === 'high-ratings') {
 			seeds = await this._loadHighRatingSeeds(policy);
 		} else if (policy.source === 'watchlist') {
@@ -710,13 +716,13 @@ export class HomeLabDiscoveryPersonalisation {
 
 	_displayTitle(section, policy, seed) {
 		const name = String(seed?.Name || '').trim();
-		if (!name) return section?.title || 'For You';
+		if (!name) return personalDisplayTitle(section, policy);
 		if (policy.source === 'favourites') return `More Like Favourite ${name}`;
 		if (policy.source === 'watchlist') return 'Recommended from Your Watchlist';
 		if (policy.source === 'likes') return `Because You Liked ${name}`;
 		if (policy.source === 'high-ratings') return `Because You Rated ${name} Highly`;
 		if (policy.source === 'positive') return section?.title || 'Recommended For You';
-		if (policy.source === 'random') return section?.title || 'Something Different';
+		if (policy.source === 'random') return personalDisplayTitle(section, policy);
 		return `Because You Watched ${name}`;
 	}
 }

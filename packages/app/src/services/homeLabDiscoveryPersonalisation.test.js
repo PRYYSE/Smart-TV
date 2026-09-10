@@ -139,6 +139,54 @@ describe('Home Lab Discovery Jellyfin personalisation', () => {
 		expect(loaded.displayTitle).toBe('Because You Rated Top Rated Highly');
 	});
 
+	test('rewatch uses explicit positive played signals and excludes neutral history', async () => {
+		const liked = movie('liked', 71, {UserData: {Played: true, Likes: true}});
+		const favourite = movie('favourite', 72, {UserData: {Played: true, IsFavorite: true}});
+		const neutralHistory = movie('neutral-history', 73, {UserData: {Played: true}});
+		const highRated = movie('high-rated', 74, {UserData: {Played: true, Rating: 9}});
+		const api = {
+			getItems: jest.fn(async (params) => {
+				if (params?.Filters === 'Likes') return {Items: [liked]};
+				if (params?.Filters === 'IsFavorite') return {Items: [favourite]};
+				if (params?.Filters === 'IsPlayed') return {Items: [neutralHistory, highRated]};
+				return {Items: []};
+			}),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr();
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'rewatch'});
+		const loaded = await personalisation.load(section({
+			title: 'Worth Rewatching',
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'rewatch'}
+		}));
+
+		expect(loaded.results.map(item => item.id)).toEqual([71, 72, 74]);
+		expect(loaded.results.map(item => item.id)).not.toContain(73);
+		expect(seerr.getMovieRecommendations).not.toHaveBeenCalled();
+		expect(api.getItems.mock.calls.map(call => call[0]?.Filters)).toEqual(expect.arrayContaining(['Likes', 'IsFavorite', 'IsPlayed']));
+	});
+
+	test('anime novelty uses a random anime seed and normalises the overclaiming catalogue label', async () => {
+		const animeSeed = movie('anime-random', 80, {Tags: ['Anime'], OriginalLanguage: 'ja'});
+		const api = baseApi(animeSeed);
+		const seerr = baseSeerr([
+			seerrMovie(401, {genreIds: [16], originalLanguage: 'ja'}),
+			seerrMovie(402, {genreIds: [16], originalLanguage: 'en'})
+		]);
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'anime-novelty'});
+		const loaded = await personalisation.load(section({
+			id: 'anime-personal-anime-outside-your-usual-genres',
+			title: 'Anime Outside Your Usual Genres',
+			tags: ['anime', 'personal'],
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'anime-novelty'}
+		}));
+
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({SortBy: 'Random'}));
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledWith(80, 1);
+		expect(loaded.displayTitle).toBe('Something Different in Anime');
+		expect(loaded.results.map(item => item.id)).toEqual([401]);
+	});
+
 	test('owned recommendation results retain TMDB routing but expose the Jellyfin media identity', async () => {
 		const api = baseApi();
 		api.resolveItemsByProviderIds.mockImplementation(async items => items.map(item => ({
