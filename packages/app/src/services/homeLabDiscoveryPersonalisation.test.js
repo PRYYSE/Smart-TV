@@ -56,6 +56,11 @@ describe('Home Lab Discovery Jellyfin personalisation', () => {
 		expect(homeLabDiscoveryPersonalSlot(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'weekend-binge'}}))).toBeNull();
 		expect(homeLabDiscoveryPersonalPolicy(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'something-completely-different'}})))
 			.toEqual(expect.objectContaining({source: 'random', strategy: 'something-completely-different'}));
+		expect(homeLabDiscoveryPersonalPolicy(section({
+			id: 'anime-high-ratings',
+			tags: ['anime'],
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'anime-high-ratings'}
+		}))).toEqual(expect.objectContaining({source: 'high-ratings', animeOnly: true}));
 		expect(HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES).toContain('recent-discovery-context');
 		expect(HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES).toContain('anime-completed');
 	});
@@ -107,6 +112,31 @@ describe('Home Lab Discovery Jellyfin personalisation', () => {
 		expect(watchlistSeerr.getWatchlist).toHaveBeenCalledWith(1);
 		expect(watchlistSeerr.getMovieRecommendations).toHaveBeenCalledWith(70, 1);
 		expect(loaded.displayTitle).toBe('Recommended from Your Watchlist');
+	});
+
+	test('high-ratings seeds recommendations from numeric Jellyfin user ratings', async () => {
+		const low = movie('low-rated', 62, {Name: 'Low Rated', UserData: {Played: true, Rating: 7.5}});
+		const high = movie('high-rated', 63, {Name: 'Top Rated', UserData: {Played: true, Rating: 9.5}});
+		const api = {
+			getItems: jest.fn(async () => ({Items: [low, high]})),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr([seerrMovie(204)]);
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'ratings'});
+		const loaded = await personalisation.load(section({
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'high-ratings'}
+		}));
+
+		expect(api.getItems).toHaveBeenCalledTimes(1);
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({
+			Filters: 'IsPlayed',
+			SortBy: 'DatePlayed',
+			SortOrder: 'Descending',
+			IncludeItemTypes: 'Movie',
+			Limit: 100
+		}));
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledWith(63, 1);
+		expect(loaded.displayTitle).toBe('Because You Rated Top Rated Highly');
 	});
 
 	test('owned recommendation results retain TMDB routing but expose the Jellyfin media identity', async () => {

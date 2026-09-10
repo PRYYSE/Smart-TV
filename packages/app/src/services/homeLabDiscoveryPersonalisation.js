@@ -1,5 +1,6 @@
 const PAGE_SIZE = 15;
 const SEED_LIMIT = 60;
+const HIGH_RATING_SEED_LIMIT = 100;
 const MAX_CACHED_ROWS = 24;
 const UPSTREAM_FETCH_BUDGET = 4;
 const PERSONAL_DETAIL_FIELDS = 'ProviderIds,Overview,Genres,CommunityRating,Tags,People,Studios,ProductionLocations,OriginalLanguage,RunTimeTicks,ProductionYear,UserData,SeriesId';
@@ -557,11 +558,7 @@ export class HomeLabDiscoveryPersonalisation {
 			]);
 			seeds = uniqueByIdentity([...likes, ...favourites, ...history]);
 		} else if (policy.source === 'high-ratings') {
-			const [likes, favourites] = await Promise.all([
-				this._loadJellyfinSeeds('likes', policy),
-				this._loadJellyfinSeeds('favourites', policy)
-			]);
-			seeds = uniqueByIdentity([...likes, ...favourites]);
+			seeds = await this._loadHighRatingSeeds(policy);
 		} else if (policy.source === 'watchlist') {
 			seeds = await this._loadWatchlistSeeds();
 		} else {
@@ -569,6 +566,27 @@ export class HomeLabDiscoveryPersonalisation {
 		}
 		const now = this.now();
 		return uniqueByIdentity(seeds).filter(item => matchesPolicy(item, policy, now));
+	}
+
+	async _loadHighRatingSeeds(policy) {
+		if (typeof this.api?.getItems !== 'function') return [];
+		try {
+			const response = await this.api.getItems({
+				Recursive: true,
+				IncludeItemTypes: itemTypesFor(policy),
+				Limit: HIGH_RATING_SEED_LIMIT,
+				Fields: PERSONAL_DETAIL_FIELDS,
+				SortBy: 'DatePlayed',
+				SortOrder: 'Descending',
+				Filters: 'IsPlayed'
+			});
+			return (response?.Items || []).filter((item) => {
+				const rating = Number(item?.UserData?.Rating);
+				return Number.isFinite(rating) && rating >= 8;
+			});
+		} catch (_error) {
+			return [];
+		}
 	}
 
 	async _loadJellyfinSeeds(source, policy) {
@@ -695,7 +713,8 @@ export class HomeLabDiscoveryPersonalisation {
 		if (!name) return section?.title || 'For You';
 		if (policy.source === 'favourites') return `More Like Favourite ${name}`;
 		if (policy.source === 'watchlist') return 'Recommended from Your Watchlist';
-		if (policy.source === 'likes' || policy.source === 'high-ratings') return `Because You Liked ${name}`;
+		if (policy.source === 'likes') return `Because You Liked ${name}`;
+		if (policy.source === 'high-ratings') return `Because You Rated ${name} Highly`;
 		if (policy.source === 'positive') return section?.title || 'Recommended For You';
 		if (policy.source === 'random') return section?.title || 'Something Different';
 		return `Because You Watched ${name}`;
