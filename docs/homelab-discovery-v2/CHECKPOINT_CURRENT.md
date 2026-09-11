@@ -1,118 +1,82 @@
 # Home Lab webOS Discovery v2 — Current Checkpoint
 
-**Last updated:** 2026-09-10 Australia/Adelaide  
-**Primary branch:** `homelab/webos-discovery-v2`
+**Last updated:** 2026-09-11 Australia/Adelaide  
+**Accepted branch:** `homelab/webos-discovery-v2`  
+**Update branch:** `update/webos-2.8.2`
 
-This is the Smart-TV/webOS durable resume point for Home Lab Discovery v2. The GitHub/code reconciliation is complete. Preserve the known-good v1 branch/candidate and do not claim physical LG acceptance until the later live/device phase.
+GitHub/current repo state is authoritative. Do not restart completed webOS Discovery work and do not touch live/physical systems during this update pass.
 
-## Current boundary
+## Accepted Home Lab baseline — preserve
 
-- Smart-TV/webOS Discovery v2: **GITHUB/CODE COMPLETE**
-- Next whole-product stage: **cross-platform parity + recommendation quality**
-- Physical LG/device/live acceptance: **DEFERRED**
+- Discovery parity/product source: `a9dfa657a220a3f8f77753261bd7d8e902c0d837`
+- parity workflow #52 / `34439022624`: **GREEN**
+- accepted candidate artifact `10137277340`
+- artifact digest `sha256:9d5ccfed0889a680fa6b4d3532725ce1877f950d306d9599bb6916e9d150c47f`
+- app ID `org.moonfin.webos`
+- accepted package version `2.7.0`
+- entry `index.html`
+- Node 20 retained for legacy LG C6 compatibility
+- rollback branch `homelab/webos-v1-staging`
+- rollback candidate `f5c3078ba388f8ba1da85166f62ebf7fe0bbda1e`
 
-## Preserved baseline — do not modify
+Shared catalogue remains `486 authored / 481 active`; webOS intentionally supports `468 executable / 481 active`. The 13 structural/context lanes remain fail-closed. Cross-platform parity/recommendation semantics are complete for existing GitHub/code evidence.
 
-- known-good branch: `homelab/webos-v1-staging`
-- preserved candidate: `f5c3078ba388f8ba1da85166f62ebf7fe0bbda1e`
-- app ID: `org.moonfin.webos`
-- version: `2.7.0`
-- entry point: `index.html`
-- target TV: LG OLED65C6PSA
+## Stable upstream status
 
-## Final verified webOS product source
+Official upstream: `Moonfin-Client/Smart-TV`.
 
-`42854590caf4dbf847696483d943a886d5ab8ed7` — `fix(discovery-v2): use real Jellyfin high-rating seeds`
+The corrected Home Lab stable-release detector reports:
 
-Required workflow **#51 / `34432674158`**: **GREEN**.
+- accepted release lineage: `2.7.0`
+- accepted source base: `384d7cab3642f846463a4308e92d213e51507edf`
+- latest stable release: `2.8.2`
+- official 2.8.2 commit: `ed327948aeb8ef19098b810145ab6a3b76ccf372`
+- stable update: **YES**
+- 156 commits from accepted source base to 2.8.2
+- five upstream/Home-Lab overlap paths
 
-Verified:
+Do not replace the accepted source base with the older 2.7.0 tag commit; `384d7cab...` is the real source ancestry used by the accepted Home-Lab overlay.
 
-- 16/16 focused Discovery/integration test suites passed
-- 86/86 tests passed
-- strict Enact lint passed
-- legacy CSS/WebKit compatibility check passed
-- legacy compatibility patch stage completed: 17 files modified, 0 skipped
-- optimized production Enact build compiled successfully
-- webOS IPK packaging succeeded
-- package identity verification passed: `org.moonfin.webos` / `2.7.0` / `index.html`
-- final IPK: `Moonfin_webOS_2.7.0.ipk`
-- IPK SHA-256: `80a54d415b99c813b893c6abc7b465fa8f383244be01aab791cd9aefd0a90d10`
-- artifact ID: `10135098617`
-- artifact name: `Moonfin-HomeLab-webOS-DiscoveryV2-42854590caf4dbf847696483d943a886d5ab8ed7`
-- artifact size: `4,312,912` bytes
-- artifact ZIP digest: `sha256:7b7b1f60d05587a59fbd5913d0f3762fad150529c5e1a0a5f09bba09c8bd7c67`
+## Smart-TV 2.8.2 isolated update — CURRENT
 
-The previous #50 source `a3a3317894a90bbab8b12cc7764187a8c5591369` remains a valid earlier rollback/reference candidate, but #51 is now the accepted GitHub/code source.
+`update/webos-2.8.2` was created directly from official 2.8.2 `ed327948aeb8ef19098b810145ab6a3b76ccf372`. Accepted and rollback branches remain untouched by the update candidate.
 
-## Final reconciliation outcome
+Draft PR #1 (`homelab/webos-discovery-v2` -> `update/webos-2.8.2`) is only a three-way conflict probe. GitHub reports it is not automatically mergeable; do not force-merge it.
 
-The final comparison against Moonfin-Core's current Discovery contract found one product-semantic defect that required correction: webOS lanes advertised highest user ratings but sourced `high-ratings` from Likes + Favourites. The final source now uses one bounded Jellyfin item query and real numeric `UserData.Rating >= 8` seeds; `anime-high-ratings` inherits the same provenance and the dynamic heading says `Because You Rated <title> Highly`.
+Explicit overlap set:
 
-This correction reduced the source fan-out from two Jellyfin calls to one and did not change catalogue structure, TV focus/UI mechanics, app/package identity or live services.
+- `packages/app/src/context/SettingsContext.js`
+- `packages/app/src/utils/homeLayout.js`
+- `packages/app/src/utils/homeLayout.test.js`
+- `packages/app/src/utils/seerrTarget.js`
+- `packages/app/src/utils/seerrTarget.test.js`
 
-No other GitHub/code blocker remained after the cross-repo reconciliation and #51 validation.
+Required merge intent:
 
-## Implemented webOS foundation — do not redo
+- preserve upstream 2.8.2 settings/layout changes; add only Home-Lab custom-row profile/layout plumbing and its tests
+- preserve upstream 2.8.2 Seerr IMDb/title search fallback and related helpers/tests
+- also preserve Home-Lab Discovery selection semantics that open known-owned items as real Jellyfin items through `seerrSelectionMediaId`
+- do not regress old-TV CSS/build constraints, app identity, focus/deep browse semantics or fail-closed Discovery behaviour
 
-- guarded six-tab catalogue UI with stock `SeerrDiscover` fallback
-- network-first server-scoped catalogue/LKG loader
-- fail-closed planner aligned with Moonfin-Core filter/sort/date-token policy
-- authenticated narrow Moonbase Seerr proxy client
-- membership filtering, bounded lane loading, deterministic composition and post-fetch dedup
-- persistent surfaced-lane rotation and refresh/reset handling
-- real Jellyfin/Seerr personalisation sources; unsupported structural/context semantics fail closed
-- Enact Spotlight landing navigation with exact card/See All focus restoration
-- deep `See All` route/controller/virtual grid with incremental paging, dedup, retry and retained data/focus
-- owned Discovery selections preserve Jellyfin identity and open the local detail/playback path
-- refresh failure preserves usable retained rows and reports failure
-- remotely reachable Retry/Load More/error states
-- legacy WebKit build path
-- performance-aware visual policy for constrained LG hardware
-- compact <=800 px deep browsing while preserving VirtualGrid positioning
-- artwork fallbacks and invalid provider-ID rejection
-- explicit exhausted-paging state
-- opt-in aggregate recommendation-quality diagnostics without titles/Jellyfin IDs
+Workflow support commit `a4e0a3251bf3a987e6c92ad4c1575e5c528401e0` added `update/webos-*` validation while retaining Node 20 and protected app identity; #53 / `34576558771` validated it GREEN.
 
-## Semantic accounting
+Port-analysis commit `2c2a7627db8910752d587328cdacef6c76afb537` adds `.github/workflows/homelab-webos-upstream-port.yml`. It is read-only: it resolves the latest stable release, attempts the three-way merge without pushing, records unresolved paths/status/conflict diff and uploads the complete merge worktree. It never deploys or alters accepted/rollback refs.
 
-Shared catalogue reference remains **486 authored / 481 active**. webOS intentionally supports a truthful static ceiling of **468 executable sections** before runtime sparse/error hiding.
+## Waiting runs — inspect once next continuation
 
-The 13 deliberately ineligible active catalogue lanes remain fail-closed because no sufficiently truthful and low-cost implementation is yet proven:
+- webOS Discovery validation #54 / `34578965395`: captured **IN PROGRESS**
+- webOS Upstream Port Analysis #1 / `34578965427`: captured **IN PROGRESS**
 
-- For You: `Continue Exploring`
-- Series: `Limited-Series Spotlight`, `Continue Exploring Series`, `One-Season Wonders`, `Long-Running Favourites`, `Weekend Binge`
-- Anime: `Anime Specials & TV Movies`, `One-Season Anime`, `Long-Running Anime`, `Bingeable Anime`, `Completed Anime`, `Continuing Anime`, `Anime Miniseries & Short Runs`
-
-Do not re-enable these merely to reach 481/481. Revisit them only with independently proven semantics and acceptable old-TV request/memory cost.
-
-## Next stage: cross-platform parity + recommendation quality
-
-Use an explicit semantic matrix across Moonfin-Core Web, Android mobile/tablet, Android TV/Google TV and this Enact/webOS client. Preserve truthful real-source implementations rather than forcing identical internal code.
-
-Priority comparisons include:
-
-- personalisation source provenance and strategy support
-- novelty/rotation/rewatch behaviour
-- anime/not-owned handling
-- membership/requestability/availability semantics
-- identity/detail routing
-- dedup, sparse-row behaviour, refresh/reset and retained state
-- bounded request cost and deep paging/retry behaviour
-- recommendation diversity/quality using real Home Lab diagnostics only when available
-
-Keep structural/context lanes fail-closed until proven. Do not copy old slot/hash semantics into webOS.
-
-## Deferred physical/live acceptance
-
-No physical LG acceptance is claimed by CI. The later device phase still needs the actual LG OLED65C6PSA checked for remote focus/back, 720p/1080p presentation, long text/missing imagery, responsiveness/memory, deep paging, owned playback, Seerr request actions, detail return, failure recovery, auth persistence, relaunch/resume and same-ID update compatibility.
-
-Live remains untouched.
-
-## Non-blocking release/tooling debt
-
-The #51 install step still reports legacy dependency audit/deprecation warnings, including Node 20/action deprecation notices and old browser-compatibility metadata. These did not fail the current product gate and should be assessed deliberately during the later whole-product CI/release-engineering stage rather than by blindly upgrading the old-TV dependency stack now.
+Do not poll these again in the current waiting cycle.
 
 ## Exact next action
 
-Start the cross-platform parity + recommendation-quality stage from the current verified sources. Do not reopen platform implementation work unless the parity matrix or real-data evidence demonstrates a genuine defect.
+1. Inspect #54 and Port Analysis #1 once.
+2. If Port Analysis is green, download its worktree artifact and resolve only actual conflict paths.
+3. Commit the resolved tree only to `update/webos-2.8.2`.
+4. Run the update branch through `.github/workflows/homelab-webos-discovery-v2.yml` and capture tests/build/app-ID/version/IPK evidence.
+5. Keep the accepted and rollback branches unchanged until later physical/live acceptance and deliberate promotion.
+
+## Live boundary
+
+No physical LG acceptance is claimed by CI. Live services remain untouched.
