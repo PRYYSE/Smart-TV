@@ -4,12 +4,9 @@ on:
   push:
     branches:
       - homelab/webos-discovery-v2
-    paths:
-      - '.github/workflows/homelab-webos-discovery-v2.yml'
-      - 'packages/app/**'
-      - 'packages/build-webos/**'
-      - 'package.json'
-      - 'package-lock.json'
+      - 'update/webos-*'
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -46,9 +43,29 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const appInfo = JSON.parse(fs.readFileSync('packages/build-webos/webos-meta/appinfo.json', 'utf8'));
+          const refName = process.env.GITHUB_REF_NAME || '';
+          const updateBranch = refName.startsWith('update/webos-');
+          const parseVersion = (value) => {
+            const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)$/);
+            if (!match) throw new Error(`Invalid webOS package version: ${value}`);
+            return match.slice(1).map(Number);
+          };
+          const atLeast = (actual, minimum) => {
+            for (let i = 0; i < 3; i += 1) {
+              if (actual[i] > minimum[i]) return true;
+              if (actual[i] < minimum[i]) return false;
+            }
+            return true;
+          };
           if (appInfo.id !== 'org.moonfin.webos') throw new Error(`Unexpected webOS app id: ${appInfo.id}`);
-          if (appInfo.version !== '2.7.0') throw new Error(`Unexpected webOS baseline version: ${appInfo.version}`);
           if (appInfo.main !== 'index.html') throw new Error(`Unexpected webOS entry point: ${appInfo.main}`);
+          if (updateBranch) {
+            if (!atLeast(parseVersion(appInfo.version), [2, 7, 0])) {
+              throw new Error(`Update branch webOS version regressed below 2.7.0: ${appInfo.version}`);
+            }
+          } else if (appInfo.version !== '2.7.0') {
+            throw new Error(`Unexpected webOS baseline version: ${appInfo.version}`);
+          }
           NODE
           IPK="$(find . -maxdepth 1 -type f -name 'Moonfin_webOS_*.ipk' -print -quit)"
           if [ -z "$IPK" ] || [ ! -f "$IPK" ]; then
