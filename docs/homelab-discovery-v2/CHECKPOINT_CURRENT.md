@@ -6,76 +6,81 @@
 
 GitHub/current repo state is authoritative. Do not restart completed webOS Discovery work and do not touch live/physical systems during this update pass.
 
-## Accepted Home Lab baseline — preserve
+## Accepted baseline — preserve
 
-- Discovery parity/product source: `a9dfa657a220a3f8f77753261bd7d8e902c0d837`
-- parity workflow #52 / `34439022624`: **GREEN**
-- accepted candidate artifact `10137277340`
-- artifact digest `sha256:9d5ccfed0889a680fa6b4d3532725ce1877f950d306d9599bb6916e9d150c47f`
-- app ID `org.moonfin.webos`
-- accepted package version `2.7.0`
-- entry `index.html`
-- Node 20 retained for legacy LG C6 compatibility
-- rollback branch `homelab/webos-v1-staging`
-- rollback candidate `f5c3078ba388f8ba1da85166f62ebf7fe0bbda1e`
-
-Shared catalogue remains `486 authored / 481 active`; webOS intentionally supports `468 executable / 481 active`. The 13 structural/context lanes remain fail-closed. Cross-platform parity/recommendation semantics are complete for existing GitHub/code evidence.
+- Discovery parity/product source `a9dfa657a220a3f8f77753261bd7d8e902c0d837`, #52 / `34439022624` GREEN.
+- accepted artifact `10137277340`, digest `sha256:9d5ccfed0889a680fa6b4d3532725ce1877f950d306d9599bb6916e9d150c47f`.
+- app ID `org.moonfin.webos`, accepted package `2.7.0`, entry `index.html`.
+- Node 20 retained for legacy LG C6 compatibility.
+- rollback `homelab/webos-v1-staging` / `f5c3078ba388f8ba1da85166f62ebf7fe0bbda1e` untouched.
+- catalogue remains `486 authored / 481 active`; webOS intentionally `468 executable / 481 active`; 13 structural/context lanes fail closed.
 
 ## Stable upstream status
 
-Official upstream: `Moonfin-Client/Smart-TV`.
+Corrected stable-release detector reports:
 
-The corrected Home Lab stable-release detector reports:
+- accepted release lineage `2.7.0`.
+- accepted source base `384d7cab3642f846463a4308e92d213e51507edf` — keep this real ancestry anchor.
+- latest stable release `2.8.2` at `ed327948aeb8ef19098b810145ab6a3b76ccf372`.
+- stable update: **YES**.
+- five upstream/Home-Lab overlap paths.
 
-- accepted release lineage: `2.7.0`
-- accepted source base: `384d7cab3642f846463a4308e92d213e51507edf`
-- latest stable release: `2.8.2`
-- official 2.8.2 commit: `ed327948aeb8ef19098b810145ab6a3b76ccf372`
-- stable update: **YES**
-- 156 commits from accepted source base to 2.8.2
-- five upstream/Home-Lab overlap paths
+## 2.8.2 isolated port — reviewed
 
-Do not replace the accepted source base with the older 2.7.0 tag commit; `384d7cab...` is the real source ancestry used by the accepted Home-Lab overlay.
+`update/webos-2.8.2` was created directly from official 2.8.2. Draft PR #1 is a conflict probe only; do not force-merge it.
 
-## Smart-TV 2.8.2 isolated update — CURRENT
+Read-only validation is complete:
 
-`update/webos-2.8.2` was created directly from official 2.8.2 `ed327948aeb8ef19098b810145ab6a3b76ccf372`. Accepted and rollback branches remain untouched by the update candidate.
+- webOS Discovery #54 / `34578965395`: **GREEN**.
+- Port Analysis #1 / `34578965427`: **GREEN**.
+- port artifact `10190788565`, digest `sha256:f9bbed71dd7c08770748e749a45aaa75663e58da881c99c461dd4b340fa42f46`.
+- exactly five conflicts:
+  - `packages/app/src/context/SettingsContext.js`
+  - `packages/app/src/utils/homeLayout.js`
+  - `packages/app/src/utils/homeLayout.test.js`
+  - `packages/app/src/utils/seerrTarget.js`
+  - `packages/app/src/utils/seerrTarget.test.js`
+- all other Home-Lab overlay paths merged cleanly.
 
-Draft PR #1 (`homelab/webos-discovery-v2` -> `update/webos-2.8.2`) is only a three-way conflict probe. GitHub reports it is not automatically mergeable; do not force-merge it.
+Reviewed merge result preserves:
 
-Explicit overlap set:
+- upstream 2.8.2 settings/layout evolution and `serverPluginSections` passthrough.
+- Home-Lab custom destination-row parsing/profile plumbing via `customHomeRowsFromProfile` without writing derived `customHomeRows` as an authoritative standalone profile field.
+- upstream Seerr IMDb/title fallback, search matching and library helpers.
+- Home-Lab owned-item routing through `seerrSelectionMediaId`, so known-owned Discovery titles open real Jellyfin detail/playback items.
 
-- `packages/app/src/context/SettingsContext.js`
-- `packages/app/src/utils/homeLayout.js`
-- `packages/app/src/utils/homeLayout.test.js`
-- `packages/app/src/utils/seerrTarget.js`
-- `packages/app/src/utils/seerrTarget.test.js`
+Local dependency-free behavioural checks, Settings structural checks, JS parse checks and conflict-marker scan: **PASS**.
 
-Required merge intent:
+## Staging control — CURRENT
 
-- preserve upstream 2.8.2 settings/layout changes; add only Home-Lab custom-row profile/layout plumbing and its tests
-- preserve upstream 2.8.2 Seerr IMDb/title search fallback and related helpers/tests
-- also preserve Home-Lab Discovery selection semantics that open known-owned items as real Jellyfin items through `seerrSelectionMediaId`
-- do not regress old-TV CSS/build constraints, app identity, focus/deep browse semantics or fail-closed Discovery behaviour
+Source `f932addf2d533cafe3b513d0a1960c631078f124` changes `.github/workflows/homelab-webos-upstream-port.yml` from read-only analysis into a fail-closed one-time staging gate.
 
-Workflow support commit `a4e0a3251bf3a987e6c92ad4c1575e5c528401e0` added `update/webos-*` validation while retaining Node 20 and protected app identity; #53 / `34576558771` validated it GREEN.
+Before it may push, it requires:
 
-Port-analysis commit `2c2a7627db8910752d587328cdacef6c76afb537` adds `.github/workflows/homelab-webos-upstream-port.yml`. It is read-only: it resolves the latest stable release, attempts the three-way merge without pushing, records unresolved paths/status/conflict diff and uploads the complete merge worktree. It never deploys or alters accepted/rollback refs.
+- latest stable tag exactly `2.8.2` and reviewed SHA `ed327948aeb8ef19098b810145ab6a3b76ccf372`.
+- target `update/webos-2.8.2` still untouched at that release SHA.
+- conflict set exactly the five reviewed paths above.
+- conflict-surface + Discovery tests under Node 20.
+- successful `npm run build:webos`.
+- exact package identity `org.moonfin.webos` / `2.8.2` / `index.html`.
+- no tracked unstaged build mutations.
 
-## Waiting runs — inspect once next continuation
+Only after all gates pass does it create the merge commit and fast-forward `update/webos-2.8.2`. Accepted and rollback refs are never targeted.
 
-- webOS Discovery validation #54 / `34578965395`: captured **IN PROGRESS**
-- webOS Upstream Port Analysis #1 / `34578965427`: captured **IN PROGRESS**
+## Waiting — DO NOT POLL AGAIN THIS CYCLE
 
-Do not poll these again in the current waiting cycle.
+- Port Staging #2 / `34580576176`: captured **IN PROGRESS**.
+- accepted-branch regression #55 / `34580576157`: captured **IN PROGRESS**.
+
+Do not claim a 2.8.2 candidate SHA yet; the update branch has not been re-read after staging.
 
 ## Exact next action
 
-1. Inspect #54 and Port Analysis #1 once.
-2. If Port Analysis is green, download its worktree artifact and resolve only actual conflict paths.
-3. Commit the resolved tree only to `update/webos-2.8.2`.
-4. Run the update branch through `.github/workflows/homelab-webos-discovery-v2.yml` and capture tests/build/app-ID/version/IPK evidence.
-5. Keep the accepted and rollback branches unchanged until later physical/live acceptance and deliberate promotion.
+1. Inspect staging #2 and regression #55 once.
+2. If staging failed, inspect only its failing step/log and correct that defect.
+3. If staging succeeded, fetch the resulting `update/webos-2.8.2` SHA and the update-branch Discovery workflow triggered by the push.
+4. Capture tests/build/app-ID/version/IPK artifact evidence for the isolated 2.8.2 candidate.
+5. Keep accepted + rollback branches unchanged until deliberate promotion and later physical/live acceptance.
 
 ## Live boundary
 
