@@ -1,0 +1,197 @@
+name: Home Lab webOS Upstream Port Staging
+
+on:
+  push:
+    branches:
+      - homelab/webos-discovery-v2
+    paths:
+      - '.github/workflows/homelab-webos-upstream-port.yml'
+      - 'tooling/webos-2.8.2-reviewed-conflicts.patch'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: homelab-webos-upstream-port-staging
+  cancel-in-progress: false
+
+jobs:
+  stage-reviewed-port:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_RELEASE_TAG: '2.8.2'
+      EXPECTED_RELEASE_SHA: 'ed327948aeb8ef19098b810145ab6a3b76ccf372'
+      EXPECTED_PATCH_SHA256: '23d7800c6d15812cea030a8e5329bea267a5dd17d18be9003efb9b4904f54848'
+      REVIEWED_OVERLAY_SHA: '2c2a7627db8910752d587328cdacef6c76afb537'
+      TARGET_BRANCH: 'update/webos-2.8.2'
+      RESOLUTION_PATCH: 'tooling/webos-2.8.2-reviewed-conflicts.patch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Verify reviewed release and untouched target branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/Moonfin-Client/Smart-TV/releases/latest --jq '.tag_name')"
+          if [ "$tag" != "$EXPECTED_RELEASE_TAG" ]; then
+            echo "Latest stable release changed from reviewed $EXPECTED_RELEASE_TAG to $tag; stop for a fresh impact review." >&2
+            exit 1
+          fi
+
+          git remote remove official >/dev/null 2>&1 || true
+          git remote add official https://github.com/Moonfin-Client/Smart-TV.git
+          git fetch --no-tags official "refs/tags/${tag}:refs/homelab-upstream/tv/reviewed"
+          release_sha="$(git rev-parse 'refs/homelab-upstream/tv/reviewed^{commit}')"
+          if [ "$release_sha" != "$EXPECTED_RELEASE_SHA" ]; then
+            echo "Reviewed release SHA changed: $release_sha" >&2
+            exit 1
+          fi
+
+          if git diff --name-only "$REVIEWED_OVERLAY_SHA..$GITHUB_SHA" -- packages/app packages/build-webos package.json package-lock.json | grep -q .; then
+            echo 'Product files changed after the reviewed conflict analysis; stop for a fresh review.' >&2
+            git diff --name-only "$REVIEWED_OVERLAY_SHA..$GITHUB_SHA" -- packages/app packages/build-webos package.json package-lock.json >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin "$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
+          target_sha="$(git rev-parse "refs/remotes/origin/$TARGET_BRANCH")"
+          if [ "$target_sha" != "$EXPECTED_RELEASE_SHA" ]; then
+            echo "Target branch moved from untouched 2.8.2 base ($target_sha); refusing to overwrite it." >&2
+            exit 1
+          fi
+
+      - name: Merge overlay and apply reviewed conflict patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          overlay_sha="$GITHUB_SHA"
+          git config user.name 'Home Lab CI'
+          git config user.email 'homelab-ci@example.invalid'
+          git checkout --detach "$EXPECTED_RELEASE_SHA"
+          git merge --no-commit --no-ff "$overlay_sha" || true
+
+          expected=(
+            packages/app/src/context/SettingsContext.js
+            packages/app/src/utils/homeLayout.js
+            packages/app/src/utils/homeLayout.test.js
+            packages/app/src/utils/seerrTarget.js
+            packages/app/src/utils/seerrTarget.test.js
+          )
+          mapfile -t conflicts < <(git diff --name-only --diff-filter=U | sort)
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          if [ "${conflicts[*]}" != "${expected_sorted[*]}" ]; then
+            echo 'Unexpected conflict set:' >&2
+            printf '  %s\n' "${conflicts[@]}" >&2
+            exit 1
+          fi
+
+          # Conflict markers name the current overlay commit. The reviewed patch was captured
+          # from REVIEWED_OVERLAY_SHA; product files are verified unchanged above, so normalise
+          # only that marker label before checking the fixed patch against the full conflict text.
+          for path in "${expected[@]}"; do
+            sed -i -E "s/^>>>>>>> [0-9a-f]+$/>>>>>>> $REVIEWED_OVERLAY_SHA/" "$path"
+          done
+
+          actual_patch_sha="$(sha256sum "$RESOLUTION_PATCH" | awk '{print $1}')"
+          if [ "$actual_patch_sha" != "$EXPECTED_PATCH_SHA256" ]; then
+            echo "Reviewed conflict patch digest changed: $actual_patch_sha" >&2
+            exit 1
+          fi
+
+          git apply --check --whitespace=error "$RESOLUTION_PATCH"
+          git apply --whitespace=error "$RESOLUTION_PATCH"
+          git add -- "${expected[@]}"
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo 'Unresolved merge conflicts remain after reviewed patch.' >&2
+            git diff --name-only --diff-filter=U >&2
+            exit 1
+          fi
+          if grep -n -E '^(<<<<<<<|=======|>>>>>>>)' "${expected[@]}"; then
+            echo 'Conflict marker survived in a reviewed file.' >&2
+            exit 1
+          fi
+          git diff --cached --check -- "${expected[@]}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Conflict-surface and Discovery tests
+        run: >-
+          npm test --workspace=@moonfin/app -- --runInBand
+          packages/app/src/utils/homeLayout.test.js
+          packages/app/src/utils/seerrTarget.test.js
+          packages/app/src/services/homeLabDiscoveryPlanner.test.js
+          packages/app/src/services/homeLabDiscoveryCatalogue.test.js
+          packages/app/src/services/homeLabDiscoveryClient.test.js
+          packages/app/src/services/homeLabDiscoveryComposer.test.js
+          packages/app/src/services/homeLabDiscoveryMembership.test.js
+          packages/app/src/services/homeLabDiscoveryPersonalisation.test.js
+          packages/app/src/services/homeLabDiscoveryRotationStore.test.js
+          packages/app/src/services/homeLabDiscoveryLaneLoader.test.js
+          packages/app/src/services/homeLabDiscoveryLaneLoader.identity.test.js
+          packages/app/src/services/homeLabDiscoveryTabController.test.js
+          packages/app/src/services/homeLabDiscoveryDeepState.test.js
+          packages/app/src/services/homeLabDiscoveryDeepController.test.js
+          packages/app/src/services/homeLabDiscoveryRoute.test.js
+          packages/app/src/services/homeLabDiscoveryQuality.test.js
+          packages/app/src/services/homeLabDiscoveryVisualPolicy.test.js
+
+      - name: Build reviewed webOS 2.8.2 port
+        run: npm run build:webos
+
+      - name: Verify exact package identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const appInfo = JSON.parse(fs.readFileSync('packages/build-webos/webos-meta/appinfo.json', 'utf8'));
+          if (appInfo.id !== 'org.moonfin.webos') throw new Error(`Unexpected webOS app id: ${appInfo.id}`);
+          if (appInfo.version !== '2.8.2') throw new Error(`Unexpected reviewed webOS version: ${appInfo.version}`);
+          if (appInfo.main !== 'index.html') throw new Error(`Unexpected webOS entry point: ${appInfo.main}`);
+          NODE
+
+          IPK="$(find . -maxdepth 1 -type f -name 'Moonfin_webOS_*.ipk' -print -quit)"
+          if [ -z "$IPK" ] || [ ! -f "$IPK" ]; then
+            echo 'Moonfin webOS IPK was not produced.' >&2
+            exit 1
+          fi
+          sha256sum "$IPK"
+
+      - name: Commit and push isolated update candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build tooling may modify tracked worktree files for legacy compatibility.
+          # The reviewed merge is already fully staged, so restore only unstaged tracked changes.
+          git restore --worktree .
+          if ! git diff --quiet; then
+            echo 'Tracked unstaged changes remain after restore.' >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git commit -m 'chore(upstream): port Home Lab overlay onto Smart-TV 2.8.2'
+          candidate_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          {
+            echo '# Home Lab webOS 2.8.2 staging result'
+            echo
+            echo "- reviewed release: \`$EXPECTED_RELEASE_TAG\` / \`$EXPECTED_RELEASE_SHA\`"
+            echo "- Home Lab overlay: \`$GITHUB_SHA\`"
+            echo "- isolated candidate: \`$candidate_sha\`"
+            echo "- target branch: \`$TARGET_BRANCH\`"
+            echo '- exact five conflicts resolved with reviewed fixed-digest patch'
+            echo '- focused tests, Node 20 webOS build and exact package identity passed before push'
+            echo '- accepted Home-Lab and rollback branches were not modified'
+          } >> "$GITHUB_STEP_SUMMARY"

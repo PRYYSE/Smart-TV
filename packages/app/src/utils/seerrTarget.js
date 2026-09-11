@@ -8,17 +8,43 @@
 
 export const IDLE = {mediaId: null, mediaType: null};
 
-// How a Seerr title reaches the detail screen when the library has nothing to open for it.
-// External rows key some titles by IMDb id alone, so the stub can carry that instead of a
-// TMDB id, along with the title for a search fallback.
-export const seerrDetailStub = ({mediaId, mediaType, imdbId, title}) => ({
-	Id: `seerr-${mediaType}-${mediaId ?? imdbId}`,
-	Type: mediaType === 'tv' ? 'Series' : 'Movie',
-	_seerrMediaId: mediaId ?? null,
-	_seerrMediaType: mediaType,
-	_seerrImdbId: imdbId || null,
-	_seerrTitle: title || null
-});
+const localMediaId = (value) => {
+	const id = String(value == null ? '' : value).trim();
+	return id || null;
+};
+
+// Discovery normally routes by TMDB id, but provider-id reconciliation can also prove that
+// the title already exists in Jellyfin. Keep that local identity attached to the selection so
+// the detail screen can open the real Jellyfin item rather than a non-playable Seerr stub.
+export const seerrSelectionMediaId = ({tmdbId, jellyfinMediaId} = {}) => {
+	const localId = localMediaId(jellyfinMediaId);
+	return localId ? {tmdbId, jellyfinMediaId: localId} : tmdbId;
+};
+
+// How a Seerr title reaches the detail screen. A structured Discovery selection with a known
+// Jellyfin id opens the real library item. Otherwise preserve the current Seerr-only identity,
+// including the upstream IMDb/title fallback for external rows that do not have a TMDB id yet.
+export const seerrDetailStub = ({mediaId, mediaType, imdbId, title}) => {
+	const structured = mediaId && typeof mediaId === 'object' ? mediaId : null;
+	const jellyfinMediaId = localMediaId(structured?.jellyfinMediaId);
+	const resolvedType = mediaType === 'tv' ? 'Series' : 'Movie';
+	if (jellyfinMediaId) {
+		return {
+			Id: jellyfinMediaId,
+			Type: resolvedType
+		};
+	}
+
+	const tmdbId = structured ? structured.tmdbId : mediaId;
+	return {
+		Id: `seerr-${mediaType}-${tmdbId ?? imdbId}`,
+		Type: resolvedType,
+		_seerrMediaId: tmdbId ?? null,
+		_seerrMediaType: mediaType,
+		_seerrImdbId: imdbId || null,
+		_seerrTitle: title || null
+	};
+};
 
 export const isSeerrOnlyItem = (item) => item?._seerrMediaId != null || item?._seerrImdbId != null;
 

@@ -1,0 +1,100 @@
+name: Home Lab webOS Beta
+
+on:
+  push:
+    branches:
+      - homelab/hubs-v1
+      - homelab/webos-v1-staging
+    paths:
+      - '.github/workflows/homelab-webos-beta.yml'
+      - 'tooling/apply_homelab_tv_hubs_patch.py'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: homelab-webos-beta
+  cancel-in-progress: true
+
+jobs:
+  webos-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Home Lab Smart-TV branch
+        uses: actions/checkout@v4
+
+      - name: Apply Home Lab hub overlay
+        run: python3 tooling/apply_homelab_tv_hubs_patch.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build webOS IPK
+        run: npm run build:webos
+
+      - name: Package Home Lab webOS beta
+        run: |
+          IPK="$(find . -maxdepth 1 -type f -name 'Moonfin_webOS_*.ipk' -print -quit)"
+          if [ -z "$IPK" ] || [ ! -f "$IPK" ]; then
+            echo "Moonfin webOS IPK was not produced." >&2
+            find . -maxdepth 2 -type f -name '*.ipk' -print || true
+            exit 1
+          fi
+
+          cp "$IPK" Moonfin_HomeLab_webOS.ipk
+          sha256sum Moonfin_HomeLab_webOS.ipk > Moonfin_HomeLab_webOS.ipk.sha256
+          printf '{\n  "sourceCommit": "%s",\n  "branch": "%s",\n  "baseline": "Moonfin Smart-TV 2.7.0",\n  "prototype": "homelab-tv-content-v1"\n}\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" > Moonfin_HomeLab_webOS.manifest.json
+
+      - name: Upload Home Lab webOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonfin-HomeLab-webOS
+          path: |
+            Moonfin_HomeLab_webOS.ipk
+            Moonfin_HomeLab_webOS.ipk.sha256
+            Moonfin_HomeLab_webOS.manifest.json
+          if-no-files-found: error
+
+      - name: Publish stable Home Lab webOS test download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_NAME" = "homelab/webos-v1-staging" ]; then
+            TAG="homelab-webos-v1-candidate"
+            TITLE="Moonfin Home Lab webOS V1 Candidate"
+          else
+            TAG="homelab-webos-beta-latest"
+            TITLE="Moonfin Home Lab webOS Beta"
+          fi
+          NOTES="Latest Home Lab LG webOS beta built from commit ${GITHUB_SHA}. Includes the Home / Movies / TV / Anime functional hub baseline. The IPK asset is replaced after each successful build."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              Moonfin_HomeLab_webOS.ipk \
+              Moonfin_HomeLab_webOS.ipk.sha256 \
+              Moonfin_HomeLab_webOS.manifest.json \
+              --clobber
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --prerelease
+          else
+            gh release create "$TAG" \
+              Moonfin_HomeLab_webOS.ipk \
+              Moonfin_HomeLab_webOS.ipk.sha256 \
+              Moonfin_HomeLab_webOS.manifest.json \
+              --target "$GITHUB_REF_NAME" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --prerelease
+          fi

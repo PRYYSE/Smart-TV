@@ -1,0 +1,176 @@
+--- a/packages/app/src/context/SettingsContext.js
++++ b/packages/app/src/context/SettingsContext.js
+@@ -215,15 +215,12 @@
+ 	'mediaBarSourceType', 'mediaBarLibraryIds', 'mediaBarCollectionIds',
+ 	'mediaBarOverlayColor', 'mediaBarOverlayOpacity',
+ 	'homeRows', 'homeRowsStyle', 'detailScreenStyle', 'detailExpandedTabs', 'fullScreenRows', 'homeRowsPosterSize', 'useSeriesThumbnails',
+-<<<<<<< HEAD
+ 	'hideDetailsMediaDescription', 'detailUseSeriesThumbnails', 'hideHomeMediaDescription',
+ 	'personalRatingStyle', 'recentlyReleasedSeriesType', 'mergeRecentRowsByType', 'playlistsGroupByType',
+-=======
+ 	// Derived from pluginDynamic homeSections. It is pulled so Home and the
+ 	// destination hubs can render Moonbase rows, but is never written back as a
+ 	// standalone profile field (homeSections remains authoritative).
+ 	'customHomeRows',
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 	'useDetailedSubHeadings', 'showMediaDetailsOnLibraryPage', 'hideBackdropsInLibraries',
+ 	'syncplayEnabled', 'syncplayAutoOpen',
+ 	'showSyncPlayButton',
+@@ -290,12 +287,8 @@
+ 	const wanted = keys ? new Set(keys) : null;
+ 	const profile = {};
+ 	for (const key of SYNCABLE_KEYS) {
+-<<<<<<< HEAD
+-		if (key === 'homeRows') continue;
+-		if (wanted && !wanted.has(key)) continue;
+-=======
+ 		if (key === 'homeRows' || key === 'customHomeRows') continue;
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
++		if (wanted && !wanted.has(key)) continue;
+ 		const value = localSettings[key];
+ 		if (value === undefined || value === null) continue;
+ 		const serverKey = LOCAL_TO_SERVER[key] || key;
+@@ -341,19 +334,15 @@
+ 	const homeRows = homeRowsFromProfile(envelope?.tv)
+ 		?? homeRowsFromProfile(envelope?.global)
+ 		?? homeRowsFromProfile(adminDefaults);
+-<<<<<<< HEAD
+ 	if (homeRows !== undefined) {
+ 		resolved.homeRows = homeRows;
+ 		resolved.serverPluginSections = serverPluginSections();
+ 	}
+-=======
+-	if (homeRows !== undefined) resolved.homeRows = homeRows;
+ 
+ 	const customHomeRows = customHomeRowsFromProfile(envelope?.tv)
+ 		?? customHomeRowsFromProfile(envelope?.global)
+ 		?? customHomeRowsFromProfile(adminDefaults);
+ 	if (customHomeRows !== undefined) resolved.customHomeRows = customHomeRows;
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 	return resolved;
+ };
+ 
+--- a/packages/app/src/utils/homeLayout.js
++++ b/packages/app/src/utils/homeLayout.js
+@@ -206,12 +206,11 @@
+ 	return undefined;
+ };
+ 
+-<<<<<<< HEAD
+ // The plugin rows of the layout that was read. They ride the passthrough so a save
+ // hands them back, and the home screen draws them from here.
+ export const serverPluginSections = () =>
+ 	(homeSectionsPassthrough || []).filter((section) => section && section.kind === 'pluginDynamic');
+-=======
++
+ // Moonbase stores custom/editorial rows inside homeSections as pluginDynamic
+ // entries. Convert them into the shape consumed by the TV external-row loader.
+ // Disabled destination-only rows are deliberately kept: they stay off Home but
+@@ -252,7 +251,6 @@
+ 
+ 	return rows.length > 0 ? rows.sort((left, right) => left.order - right.order) : undefined;
+ };
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 
+ export const homeRowsToSections = (rows) => [
+ 	...[...rows]
+--- a/packages/app/src/utils/homeLayout.test.js
++++ b/packages/app/src/utils/homeLayout.test.js
+@@ -2,11 +2,8 @@
+ 	DEFAULT_HOME_ROWS,
+ 	TV_TO_SERVER_ROW,
+ 	__resetHomeLayoutPassthrough,
+-<<<<<<< HEAD
+ 	serverPluginSections,
+-=======
+ 	customHomeRowsFromProfile,
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 	hasSeenServerLayout,
+ 	homeRowsFromProfile,
+ 	homeRowsFromRowOrder,
+--- a/packages/app/src/utils/seerrTarget.js
++++ b/packages/app/src/utils/seerrTarget.js
+@@ -8,25 +8,12 @@
+ 
+ export const IDLE = {mediaId: null, mediaType: null};
+ 
+-<<<<<<< HEAD
+-// How a Seerr title reaches the detail screen when the library has nothing to open for it.
+-// External rows key some titles by IMDb id alone, so the stub can carry that instead of a
+-// TMDB id, along with the title for a search fallback.
+-export const seerrDetailStub = ({mediaId, mediaType, imdbId, title}) => ({
+-	Id: `seerr-${mediaType}-${mediaId ?? imdbId}`,
+-	Type: mediaType === 'tv' ? 'Series' : 'Movie',
+-	_seerrMediaId: mediaId ?? null,
+-	_seerrMediaType: mediaType,
+-	_seerrImdbId: imdbId || null,
+-	_seerrTitle: title || null
+-});
+-=======
+ const localMediaId = (value) => {
+ 	const id = String(value == null ? '' : value).trim();
+ 	return id || null;
+ };
+ 
+-// Discovery normally routes by TMDB id, but a provider-id reconciliation can also prove that
++// Discovery normally routes by TMDB id, but provider-id reconciliation can also prove that
+ // the title already exists in Jellyfin. Keep that local identity attached to the selection so
+ // the detail screen can open the real Jellyfin item rather than a non-playable Seerr stub.
+ export const seerrSelectionMediaId = ({tmdbId, jellyfinMediaId} = {}) => {
+@@ -35,8 +22,9 @@
+ };
+ 
+ // How a Seerr title reaches the detail screen. A structured Discovery selection with a known
+-// Jellyfin id opens the real library item; otherwise preserve the existing Seerr-only stub.
+-export const seerrDetailStub = ({mediaId, mediaType}) => {
++// Jellyfin id opens the real library item. Otherwise preserve the current Seerr-only identity,
++// including the upstream IMDb/title fallback for external rows that do not have a TMDB id yet.
++export const seerrDetailStub = ({mediaId, mediaType, imdbId, title}) => {
+ 	const structured = mediaId && typeof mediaId === 'object' ? mediaId : null;
+ 	const jellyfinMediaId = localMediaId(structured?.jellyfinMediaId);
+ 	const resolvedType = mediaType === 'tv' ? 'Series' : 'Movie';
+@@ -49,13 +37,14 @@
+ 
+ 	const tmdbId = structured ? structured.tmdbId : mediaId;
+ 	return {
+-		Id: `seerr-${mediaType}-${tmdbId}`,
++		Id: `seerr-${mediaType}-${tmdbId ?? imdbId}`,
+ 		Type: resolvedType,
+-		_seerrMediaId: tmdbId,
+-		_seerrMediaType: mediaType
++		_seerrMediaId: tmdbId ?? null,
++		_seerrMediaType: mediaType,
++		_seerrImdbId: imdbId || null,
++		_seerrTitle: title || null
+ 	};
+ };
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 
+ export const isSeerrOnlyItem = (item) => item?._seerrMediaId != null || item?._seerrImdbId != null;
+ 
+--- a/packages/app/src/utils/seerrTarget.test.js
++++ b/packages/app/src/utils/seerrTarget.test.js
+@@ -1,13 +1,10 @@
+-<<<<<<< HEAD
+-import {seerrTargetFor, seerrDetailStub, isSeerrOnlyItem, bestSearchMatch} from './seerrTarget';
+-=======
+ import {
++	bestSearchMatch,
+ 	isSeerrOnlyItem,
+ 	seerrDetailStub,
+ 	seerrSelectionMediaId,
+ 	seerrTargetFor
+ } from './seerrTarget';
+->>>>>>> 2c2a7627db8910752d587328cdacef6c76afb537
+ 
+ const movie = (providerIds) => ({Type: 'Movie', ProviderIds: providerIds});
+ 
+@@ -42,7 +39,7 @@
+ 		const mediaId = seerrSelectionMediaId({tmdbId: 603});
+ 		const stub = seerrDetailStub({mediaId, mediaType: 'movie'});
+ 		expect(isSeerrOnlyItem(stub)).toBe(true);
+-		expect(seerrTargetFor(stub)).toEqual({mediaId: 603, mediaType: 'movie'});
++		expect(seerrTargetFor(stub)).toEqual({mediaId: 603, mediaType: 'movie', imdbId: null, title: null});
+ 	});
+ 
+ 	it('opens an owned Discovery movie as the real Jellyfin item', () => {

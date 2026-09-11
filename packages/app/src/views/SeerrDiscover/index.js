@@ -1,1 +1,1 @@
-export {default} from './SeerrDiscover';
+export {default} from '../HomeLabDiscovery';

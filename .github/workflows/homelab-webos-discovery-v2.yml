@@ -1,0 +1,85 @@
+name: Home Lab webOS Discovery v2
+
+on:
+  push:
+    branches:
+      - homelab/webos-discovery-v2
+      - 'update/webos-*'
+    paths-ignore:
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homelab-webos-discovery-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Discovery service tests
+        run: npm test --workspace=@moonfin/app -- --runInBand packages/app/src/services/homeLabDiscoveryPlanner.test.js packages/app/src/services/homeLabDiscoveryCatalogue.test.js packages/app/src/services/homeLabDiscoveryClient.test.js packages/app/src/services/homeLabDiscoveryComposer.test.js packages/app/src/services/homeLabDiscoveryMembership.test.js packages/app/src/services/homeLabDiscoveryPersonalisation.test.js packages/app/src/services/homeLabDiscoveryRotationStore.test.js packages/app/src/services/homeLabDiscoveryLaneLoader.test.js packages/app/src/services/homeLabDiscoveryLaneLoader.identity.test.js packages/app/src/services/homeLabDiscoveryTabController.test.js packages/app/src/services/homeLabDiscoveryDeepState.test.js packages/app/src/services/homeLabDiscoveryDeepController.test.js packages/app/src/services/homeLabDiscoveryRoute.test.js packages/app/src/services/homeLabDiscoveryQuality.test.js packages/app/src/services/homeLabDiscoveryVisualPolicy.test.js packages/app/src/utils/seerrTarget.test.js
+
+      - name: Build webOS package
+        run: npm run build:webos
+
+      - name: Verify preserved app identity and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const appInfo = JSON.parse(fs.readFileSync('packages/build-webos/webos-meta/appinfo.json', 'utf8'));
+          const refName = process.env.GITHUB_REF_NAME || '';
+          const updateBranch = refName.startsWith('update/webos-');
+          const parseVersion = (value) => {
+            const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)$/);
+            if (!match) throw new Error(`Invalid webOS package version: ${value}`);
+            return match.slice(1).map(Number);
+          };
+          const atLeast = (actual, minimum) => {
+            for (let i = 0; i < 3; i += 1) {
+              if (actual[i] > minimum[i]) return true;
+              if (actual[i] < minimum[i]) return false;
+            }
+            return true;
+          };
+          if (appInfo.id !== 'org.moonfin.webos') throw new Error(`Unexpected webOS app id: ${appInfo.id}`);
+          if (appInfo.main !== 'index.html') throw new Error(`Unexpected webOS entry point: ${appInfo.main}`);
+          if (updateBranch) {
+            if (!atLeast(parseVersion(appInfo.version), [2, 7, 0])) {
+              throw new Error(`Update branch webOS version regressed below 2.7.0: ${appInfo.version}`);
+            }
+          } else if (appInfo.version !== '2.7.0') {
+            throw new Error(`Unexpected webOS baseline version: ${appInfo.version}`);
+          }
+          NODE
+          IPK="$(find . -maxdepth 1 -type f -name 'Moonfin_webOS_*.ipk' -print -quit)"
+          if [ -z "$IPK" ] || [ ! -f "$IPK" ]; then
+            echo 'Moonfin webOS IPK was not produced.' >&2
+            exit 1
+          fi
+          cp "$IPK" Moonfin_HomeLab_webOS_DiscoveryV2.ipk
+          sha256sum Moonfin_HomeLab_webOS_DiscoveryV2.ipk > Moonfin_HomeLab_webOS_DiscoveryV2.ipk.sha256
+
+      - name: Upload isolated candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonfin-HomeLab-webOS-DiscoveryV2-${{ github.sha }}
+          path: |
+            Moonfin_HomeLab_webOS_DiscoveryV2.ipk
+            Moonfin_HomeLab_webOS_DiscoveryV2.ipk.sha256
+          if-no-files-found: error

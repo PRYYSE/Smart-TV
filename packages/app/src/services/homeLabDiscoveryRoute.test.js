@@ -1,0 +1,51 @@
+import {
+	findHomeLabDiscoverySection,
+	homeLabDiscoveryDeepTarget,
+	homeLabDiscoveryLandingFocusTarget,
+	parseHomeLabDiscoveryDeepTarget
+} from './homeLabDiscoveryRoute';
+
+describe('Home Lab Discovery route adapter', () => {
+	test('round-trips opaque section ids without colliding with numeric Seerr genres', () => {
+		const target = homeLabDiscoveryDeepTarget('movies/award winners');
+		expect(parseHomeLabDiscoveryDeepTarget(target)).toBe('movies/award winners');
+		expect(parseHomeLabDiscoveryDeepTarget(28)).toBeNull();
+		expect(parseHomeLabDiscoveryDeepTarget('genre:28')).toBeNull();
+	});
+
+	test('rejects malformed or empty custom targets', () => {
+		expect(parseHomeLabDiscoveryDeepTarget('__homelab_discovery_v2__:')).toBeNull();
+		expect(parseHomeLabDiscoveryDeepTarget('__homelab_discovery_v2__:%E0%A4%A')).toBeNull();
+		expect(() => homeLabDiscoveryDeepTarget('')).toThrow('section id');
+	});
+
+	test('finds a section by id across catalogue tabs', () => {
+		const wanted = {id: 'anime-hidden-gems', title: 'Hidden Gems'};
+		const catalogue = {
+			tabs: [
+				{id: 'movies', sections: [{id: 'movies-popular'}]},
+				{id: 'anime', sections: [wanted]}
+			]
+		};
+		expect(findHomeLabDiscoverySection(catalogue, wanted.id)).toBe(wanted);
+		expect(findHomeLabDiscoverySection(catalogue, 'missing')).toBeNull();
+	});
+
+	test('restores the exact card or See All target and clamps stale memory', () => {
+		const lanes = [
+			{items: [{id: 1}, {id: 2}, {id: 3}]},
+			{items: [{id: 4}, {id: 5}]}
+		];
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 1, itemIndex: 1}, lanes}))
+			.toBe('homelab-discovery-row-1-item-1');
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 0, target: 'see-all'}, lanes}))
+			.toBe('homelab-discovery-row-0-see-all');
+		expect(homeLabDiscoveryLandingFocusTarget({memory: {rowIndex: 99, itemIndex: 99}, lanes}))
+			.toBe('homelab-discovery-row-1-item-1');
+		expect(homeLabDiscoveryLandingFocusTarget({lanes}))
+			.toBe('homelab-discovery-row-0-item-0');
+		expect(homeLabDiscoveryLandingFocusTarget({lanes: []})).toBeNull();
+		expect(homeLabDiscoveryLandingFocusTarget({lanes: [], emptyTarget: 'homelab-discovery-empty-retry'}))
+			.toBe('homelab-discovery-empty-retry');
+	});
+});

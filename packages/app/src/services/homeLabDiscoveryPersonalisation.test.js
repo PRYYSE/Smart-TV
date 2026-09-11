@@ -1,0 +1,316 @@
+import {
+	HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES,
+	HomeLabDiscoveryPersonalisation,
+	homeLabDiscoveryPersonalPolicy,
+	homeLabDiscoveryPersonalSlot,
+	isHomeLabDiscoveryAnimeItem
+} from './homeLabDiscoveryPersonalisation';
+
+const section = (overrides = {}) => ({
+	id: 'for-you',
+	title: 'For You',
+	query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'recent-history'},
+	...overrides
+});
+
+const movie = (id, tmdb, overrides = {}) => ({
+	Id: id,
+	Type: 'Movie',
+	Name: `Movie ${id}`,
+	ProviderIds: tmdb == null ? {} : {Tmdb: String(tmdb)},
+	CommunityRating: 8.2,
+	ProductionYear: 2022,
+	UserData: {Played: true},
+	...overrides
+});
+
+const seerrMovie = (id, overrides = {}) => ({
+	id,
+	mediaType: 'movie',
+	title: `External ${id}`,
+	overview: `Overview ${id}`,
+	posterPath: `/poster-${id}.jpg`,
+	backdropPath: `/backdrop-${id}.jpg`,
+	voteAverage: 8.1,
+	...overrides
+});
+
+const baseApi = (seed = movie('seed', 50, {Name: 'Heat'})) => ({
+	getItems: jest.fn(async (params) => ({Items: params?.Ids ? [] : [seed]})),
+	resolveItemsByProviderIds: jest.fn(async items => items)
+});
+
+const baseSeerr = (results = [seerrMovie(101), seerrMovie(102)]) => ({
+	getMovieRecommendations: jest.fn(async () => ({results})),
+	getTvRecommendations: jest.fn(async () => ({results: []})),
+	getWatchlist: jest.fn(async () => ({results: []})),
+	getRecentlyAdded: jest.fn(async () => ({results: []})),
+	trending: jest.fn(async () => ({results: []})),
+	discoverTv: jest.fn(async () => ({results: []}))
+});
+
+describe('Home Lab Discovery Jellyfin personalisation', () => {
+	test('supports explicit semantics and fails closed instead of hashing unknown strategies', () => {
+		expect(homeLabDiscoveryPersonalSlot(section())).toBe(1);
+		expect(homeLabDiscoveryPersonalSlot(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'rewatch'}}))).toBe(15);
+		expect(homeLabDiscoveryPersonalSlot(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'weekend-binge'}}))).toBeNull();
+		expect(homeLabDiscoveryPersonalPolicy(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'something-completely-different'}})))
+			.toEqual(expect.objectContaining({source: 'random', strategy: 'something-completely-different'}));
+		expect(homeLabDiscoveryPersonalPolicy(section({
+			id: 'anime-high-ratings',
+			tags: ['anime'],
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'anime-high-ratings'}
+		}))).toEqual(expect.objectContaining({source: 'high-ratings', animeOnly: true}));
+		expect(HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES).toContain('recent-discovery-context');
+		expect(HOME_LAB_DISCOVERY_UNSUPPORTED_PERSONAL_STRATEGIES).toContain('anime-completed');
+	});
+
+	test('recent-history uses played Jellyfin history as a real Seerr recommendation seed', async () => {
+		const api = baseApi();
+		const seerr = baseSeerr();
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'server|user'});
+		const loaded = await personalisation.load(section());
+
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({
+			Filters: 'IsPlayed',
+			SortBy: 'DatePlayed',
+			IncludeItemTypes: 'Movie'
+		}));
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledWith(50, 1);
+		expect(api.resolveItemsByProviderIds).toHaveBeenCalled();
+		expect(loaded.displayTitle).toBe('Because You Watched Heat');
+		expect(loaded.results).toEqual([
+			expect.objectContaining({id: 101, mediaType: 'movie', title: 'External 101', posterPath: '/poster-101.jpg'}),
+			expect.objectContaining({id: 102, mediaType: 'movie', title: 'External 102'})
+		]);
+	});
+
+	test('favourites, likes and watchlist use their actual signal sources', async () => {
+		const favouriteApi = baseApi(movie('fav', 60, {Name: 'Favourite'}));
+		const favourite = new HomeLabDiscoveryPersonalisation({
+			api: favouriteApi,
+			seerr: baseSeerr([seerrMovie(201)]),
+			identity: () => 'fav'
+		});
+		await favourite.load(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'favourites'}}));
+		expect(favouriteApi.getItems).toHaveBeenCalledWith(expect.objectContaining({Filters: 'IsFavorite'}));
+
+		const likesApi = baseApi(movie('liked', 61, {Name: 'Liked'}));
+		const likes = new HomeLabDiscoveryPersonalisation({
+			api: likesApi,
+			seerr: baseSeerr([seerrMovie(202)]),
+			identity: () => 'likes'
+		});
+		await likes.load(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'likes'}}));
+		expect(likesApi.getItems).toHaveBeenCalledWith(expect.objectContaining({Filters: 'Likes'}));
+
+		const watchlistApi = {getItems: jest.fn(), resolveItemsByProviderIds: jest.fn(async items => items)};
+		const watchlistSeerr = baseSeerr([seerrMovie(203)]);
+		watchlistSeerr.getWatchlist.mockResolvedValue({results: [seerrMovie(70, {title: 'Watchlisted'})]});
+		const watchlist = new HomeLabDiscoveryPersonalisation({api: watchlistApi, seerr: watchlistSeerr, identity: () => 'watchlist'});
+		const loaded = await watchlist.load(section({query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'watchlist'}}));
+		expect(watchlistSeerr.getWatchlist).toHaveBeenCalledWith(1);
+		expect(watchlistSeerr.getMovieRecommendations).toHaveBeenCalledWith(70, 1);
+		expect(loaded.displayTitle).toBe('Recommended from Your Watchlist');
+	});
+
+	test('high-ratings seeds recommendations from numeric Jellyfin user ratings', async () => {
+		const low = movie('low-rated', 62, {Name: 'Low Rated', UserData: {Played: true, Rating: 7.5}});
+		const high = movie('high-rated', 63, {Name: 'Top Rated', UserData: {Played: true, Rating: 9.5}});
+		const api = {
+			getItems: jest.fn(async () => ({Items: [low, high]})),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr([seerrMovie(204)]);
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'ratings'});
+		const loaded = await personalisation.load(section({
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'high-ratings'}
+		}));
+
+		expect(api.getItems).toHaveBeenCalledTimes(1);
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({
+			Filters: 'IsPlayed',
+			SortBy: 'DatePlayed',
+			SortOrder: 'Descending',
+			IncludeItemTypes: 'Movie',
+			Limit: 100
+		}));
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledWith(63, 1);
+		expect(loaded.displayTitle).toBe('Because You Rated Top Rated Highly');
+	});
+
+	test('rewatch uses explicit positive played signals and excludes neutral history', async () => {
+		const liked = movie('liked', 71, {UserData: {Played: true, Likes: true}});
+		const favourite = movie('favourite', 72, {UserData: {Played: true, IsFavorite: true}});
+		const neutralHistory = movie('neutral-history', 73, {UserData: {Played: true}});
+		const highRated = movie('high-rated', 74, {UserData: {Played: true, Rating: 9}});
+		const api = {
+			getItems: jest.fn(async (params) => {
+				if (params?.Filters === 'Likes') return {Items: [liked]};
+				if (params?.Filters === 'IsFavorite') return {Items: [favourite]};
+				if (params?.Filters === 'IsPlayed') return {Items: [neutralHistory, highRated]};
+				return {Items: []};
+			}),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr();
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'rewatch'});
+		const loaded = await personalisation.load(section({
+			title: 'Worth Rewatching',
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'rewatch'}
+		}));
+
+		expect(loaded.results.map(item => item.id)).toEqual([71, 72, 74]);
+		expect(loaded.results.map(item => item.id)).not.toContain(73);
+		expect(seerr.getMovieRecommendations).not.toHaveBeenCalled();
+		expect(api.getItems.mock.calls.map(call => call[0]?.Filters)).toEqual(expect.arrayContaining(['Likes', 'IsFavorite', 'IsPlayed']));
+	});
+
+	test('anime novelty uses a random anime seed and normalises the overclaiming catalogue label', async () => {
+		const animeSeed = movie('anime-random', 80, {Tags: ['Anime'], OriginalLanguage: 'ja'});
+		const api = baseApi(animeSeed);
+		const seerr = baseSeerr([
+			seerrMovie(401, {genreIds: [16], originalLanguage: 'ja'}),
+			seerrMovie(402, {genreIds: [16], originalLanguage: 'en'})
+		]);
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'anime-novelty'});
+		const loaded = await personalisation.load(section({
+			id: 'anime-personal-anime-outside-your-usual-genres',
+			title: 'Anime Outside Your Usual Genres',
+			tags: ['anime', 'personal'],
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'anime-novelty'}
+		}));
+
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({SortBy: 'Random'}));
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledWith(80, 1);
+		expect(loaded.displayTitle).toBe('Something Different in Anime');
+		expect(loaded.results.map(item => item.id)).toEqual([401]);
+	});
+
+	test('owned recommendation results retain TMDB routing but expose the Jellyfin media identity', async () => {
+		const api = baseApi();
+		api.resolveItemsByProviderIds.mockImplementation(async items => items.map(item => ({
+			...item,
+			Id: 'jf-303',
+			Type: 'Movie',
+			Name: 'Owned title',
+			ProviderIds: {Tmdb: '303'},
+			_resolvedFromExternal: true,
+			UserData: {Played: false}
+		})));
+		const personalisation = new HomeLabDiscoveryPersonalisation({
+			api,
+			seerr: baseSeerr([seerrMovie(303)]),
+			identity: () => 'owned'
+		});
+		const loaded = await personalisation.load(section());
+		expect(loaded.results).toEqual([
+			expect.objectContaining({
+				id: 303,
+				mediaType: 'movie',
+				title: 'Owned title',
+				mediaInfo: {status: 5, jellyfinMediaId: 'jf-303'}
+			})
+		]);
+	});
+
+	test('anime aliases require real anime seeds and outputs', async () => {
+		expect(isHomeLabDiscoveryAnimeItem(movie('a', 1, {Tags: ['Anime']}))).toBe(true);
+		expect(isHomeLabDiscoveryAnimeItem(movie('b', 2, {Genres: ['Animation'], OriginalLanguage: 'ja'}))).toBe(true);
+		expect(isHomeLabDiscoveryAnimeItem(movie('c', 3, {Genres: ['Animation'], OriginalLanguage: 'en'}))).toBe(false);
+		expect(isHomeLabDiscoveryAnimeItem(seerrMovie(4, {genreIds: [16], originalLanguage: 'ja'}))).toBe(true);
+
+		const animeSeed = movie('anime-seed', 80, {Name: 'Anime Seed', Tags: ['Anime']});
+		const api = baseApi(animeSeed);
+		const seerr = baseSeerr([
+			seerrMovie(401, {genreIds: [16], originalLanguage: 'ja'}),
+			seerrMovie(402, {genreIds: [16], originalLanguage: 'en'})
+		]);
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'anime'});
+		const loaded = await personalisation.load(section({
+			id: 'anime-picks',
+			tags: ['anime'],
+			query: {source: 'personalised', mediaType: 'movie', seedStrategy: 'anime-recent-history'}
+		}));
+		expect(loaded.results.map(item => item.id)).toEqual([401]);
+	});
+
+	test('mediaType all accepts both movie and series personal results', async () => {
+		const tvSeed = {
+			Id: 'series-seed',
+			Type: 'Series',
+			Name: 'Series Seed',
+			ProviderIds: {Tmdb: '90'},
+			UserData: {Played: true}
+		};
+		const api = {
+			getItems: jest.fn(async () => ({Items: [movie('movie-seed', 50, {Name: 'Movie Seed'}), tvSeed]})),
+			resolveItemsByProviderIds: jest.fn(async items => items)
+		};
+		const seerr = baseSeerr([seerrMovie(501)]);
+		seerr.getTvRecommendations.mockResolvedValue({results: [{
+			id: 502,
+			mediaType: 'tv',
+			name: 'External Series',
+			voteAverage: 8.0
+		}]});
+		const personalisation = new HomeLabDiscoveryPersonalisation({api, seerr, identity: () => 'all'});
+		const loaded = await personalisation.load(section({
+			query: {source: 'personalised', mediaType: 'all', seedStrategy: 'recent-history'}
+		}));
+		expect(loaded.results.length).toBeGreaterThan(0);
+		expect(loaded.results.every(item => ['movie', 'tv'].includes(item.mediaType))).toBe(true);
+	});
+
+	test('pages a cached recommendation result and force refresh reloads it', async () => {
+		const api = baseApi();
+		let generation = 0;
+		const seerr = baseSeerr();
+		seerr.getMovieRecommendations.mockImplementation(async () => {
+			generation += 1;
+			return {results: [seerrMovie(generation * 10 + 1), seerrMovie(generation * 10 + 2), seerrMovie(generation * 10 + 3)]};
+		});
+		const personalisation = new HomeLabDiscoveryPersonalisation({
+			api,
+			seerr,
+			identity: () => 'scope',
+			pageSize: 2
+		});
+		const first = await personalisation.load(section(), {page: 1});
+		const second = await personalisation.load(section(), {page: 2});
+		expect(first.results.map(item => item.id)).toEqual([11, 12]);
+		expect(second.results.map(item => item.id)).toEqual([13]);
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledTimes(1);
+		const refreshed = await personalisation.load(section(), {page: 1, forceRefresh: true});
+		expect(refreshed.results.map(item => item.id)).toEqual([21, 22]);
+		expect(seerr.getMovieRecommendations).toHaveBeenCalledTimes(2);
+	});
+
+	test('deep pages fetch later upstream recommendation pages without refetching page one', async () => {
+		const api = baseApi();
+		const seerr = baseSeerr();
+		seerr.getMovieRecommendations.mockImplementation(async (_tmdbId, page) => ({
+			page,
+			totalPages: 3,
+			results: [seerrMovie(page * 10 + 1), seerrMovie(page * 10 + 2)]
+		}));
+		const personalisation = new HomeLabDiscoveryPersonalisation({
+			api,
+			seerr,
+			identity: () => 'deep',
+			pageSize: 2,
+			upstreamFetchBudget: 1
+		});
+
+		const first = await personalisation.load(section(), {page: 1});
+		const second = await personalisation.load(section(), {page: 2});
+		const third = await personalisation.load(section(), {page: 3});
+
+		expect(first.results.map(item => item.id)).toEqual([11, 12]);
+		expect(second.results.map(item => item.id)).toEqual([21, 22]);
+		expect(third.results.map(item => item.id)).toEqual([31, 32]);
+		expect(seerr.getMovieRecommendations.mock.calls.map(call => call[1])).toEqual([1, 2, 3]);
+		expect(third.totalPages).toBe(3);
+		expect(third.totalResults).toBe(6);
+	});
+});
