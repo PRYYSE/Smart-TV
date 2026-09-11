@@ -1,0 +1,4 @@
+Home Lab Smart-TV 2.8.2 isolated candidate validation trigger.
+Product tree source: 44a72276e87f611791348fbd11584e6aff56641a
+Same-tree checkpoint: 26883e4dc3d1d2d25ce820756cf09a845227e3c1
+No product or package content is stored in this marker.
