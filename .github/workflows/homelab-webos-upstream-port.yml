@@ -1,0 +1,109 @@
+name: Home Lab webOS Upstream Port Analysis
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - homelab/webos-discovery-v2
+    paths:
+      - '.github/workflows/homelab-webos-upstream-port.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homelab-webos-upstream-port-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyse-port:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest stable Smart-TV release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/Moonfin-Client/Smart-TV/releases/latest --jq '.tag_name')"
+          test -n "$tag"
+          git remote remove official >/dev/null 2>&1 || true
+          git remote add official https://github.com/Moonfin-Client/Smart-TV.git
+          git fetch --no-tags official "refs/tags/${tag}:refs/homelab-upstream/tv/latest"
+          sha="$(git rev-parse 'refs/homelab-upstream/tv/latest^{commit}')"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Perform non-mutating three-way port analysis
+        id: merge
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -u
+          overlay_sha="$GITHUB_SHA"
+          git config user.name 'Home Lab CI'
+          git config user.email 'homelab-ci@example.invalid'
+          git checkout --detach "$RELEASE_SHA"
+
+          merge_status=clean
+          if ! git merge --no-commit --no-ff "$overlay_sha"; then
+            merge_status=conflicts
+          fi
+
+          mkdir -p /tmp/port-analysis
+          printf '%s\n' "$merge_status" > /tmp/port-analysis/MERGE_STATUS.txt
+          printf '%s\n' "$RELEASE_TAG" > /tmp/port-analysis/RELEASE_TAG.txt
+          printf '%s\n' "$RELEASE_SHA" > /tmp/port-analysis/RELEASE_SHA.txt
+          printf '%s\n' "$overlay_sha" > /tmp/port-analysis/OVERLAY_SHA.txt
+          git diff --name-only --diff-filter=U > /tmp/port-analysis/CONFLICT_PATHS.txt
+          git status --short > /tmp/port-analysis/GIT_STATUS.txt
+          git diff --cc > /tmp/port-analysis/CONFLICT_DIFF.txt || true
+
+          tar --exclude=.git -czf /tmp/port-analysis/WORKTREE.tar.gz .
+          cp /tmp/port-analysis/*.txt .
+          cp /tmp/port-analysis/WORKTREE.tar.gz .
+
+          printf 'merge_status=%s\n' "$merge_status" >> "$GITHUB_OUTPUT"
+          printf 'conflict_count=%s\n' "$(wc -l < /tmp/port-analysis/CONFLICT_PATHS.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish port-analysis summary
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          MERGE_STATUS: ${{ steps.merge.outputs.merge_status }}
+          CONFLICT_COUNT: ${{ steps.merge.outputs.conflict_count }}
+        run: |
+          {
+            echo '# Home Lab webOS stable-update port analysis'
+            echo
+            echo "- latest stable release: \`${RELEASE_TAG}\` / \`${RELEASE_SHA}\`"
+            echo "- Home Lab overlay: \`${GITHUB_SHA}\`"
+            echo "- merge status: **${MERGE_STATUS}**"
+            echo "- unresolved conflict paths: **${CONFLICT_COUNT}**"
+            echo
+            echo 'This workflow is read-only: it does not push, merge, deploy or change rollback refs.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merge-analysis workspace
+        uses: actions/upload-artifact@v4
+        with:
+          name: homelab-webos-upstream-port-${{ github.sha }}
+          path: |
+            MERGE_STATUS.txt
+            RELEASE_TAG.txt
+            RELEASE_SHA.txt
+            OVERLAY_SHA.txt
+            CONFLICT_PATHS.txt
+            GIT_STATUS.txt
+            CONFLICT_DIFF.txt
+            WORKTREE.tar.gz
+          if-no-files-found: error
+          retention-days: 14
